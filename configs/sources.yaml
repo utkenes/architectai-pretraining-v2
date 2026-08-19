@@ -1,0 +1,303 @@
+# ArchitectAI Pretraining Source Manifest
+# Production source catalog for domain-adaptive pretraining (DAPT) corpus collection.
+# Explicitly preserves license and provenance metadata for all sources.
+
+categories:
+  - id: architecture_patterns
+    name: "Architecture Patterns"
+    description: "Pattern catalogs, structural blueprints, and design topologies (e.g. monoliths, microservices, CQRS, Outbox)."
+  - id: distributed_systems
+    name: "Distributed Systems"
+    description: "Consensus algorithms, replication strategies, partitioning, CAP theorem, and event-driven systems."
+  - id: domain_driven_design
+    name: "Domain-Driven Design"
+    description: "Ubiquitous language, bounded contexts, domain models, aggregates, and strategic design."
+  - id: database_architecture
+    name: "Database Architecture"
+    description: "Storage engines, indexing strategies, transaction isolation, distributed SQL, and caching mechanisms."
+  - id: reliability
+    name: "Reliability & Resilience"
+    description: "SRE principles, fault tolerance, circuit breakers, rate limiting, and graceful degradation."
+  - id: adr
+    name: "Architectural Decision Records"
+    description: "Open ADR repositories detailing context, alternatives, and technical decisions."
+  - id: software_design
+    name: "Software Design"
+    description: "SOLID principles, modular design, clean architecture, component coupling, and API design."
+  - id: cloud_architecture
+    name: "Cloud Architecture"
+    description: "Cloud-native patterns, multi-region deployments, serverless, and infrastructure blueprints."
+  - id: messaging
+    name: "Messaging & Event-Driven Systems"
+    description: "Event-driven architecture, pub/sub topologies, message schemas, and event streaming."
+
+sources:
+  - id: test_fixtures_local
+    name: "Local Test Fixture Architecture Documents"
+    category: architecture_patterns
+    enabled: true
+    type: local_directory
+    path: "data/raw/manual"
+    license_id: "CC-BY-4.0"
+    url: "file://data/raw/manual"
+    language: en
+    include_patterns:
+      - "*.md"
+      - "*.txt"
+    metadata:
+      is_test_fixture: true
+      description: "Local architecture reference documents used for testing, validation, and pipeline verification."
+
+  - id: system_design_primer
+    name: "The System Design Primer"
+    category: architecture_patterns
+    enabled: true
+    type: git_repository
+    url: "https://github.com/donnemartin/system-design-primer.git"
+    license_id: "CC-BY-4.0"
+    language: en
+    include_patterns:
+      - "*.md"
+      - "solutions/**/*.md"
+    exclude_patterns:
+      - "LICENSE*"
+      - "README-*.md"
+    metadata:
+      repository_owner: "donnemartin"
+      domain: "software architecture patterns"
+
+  - id: java_design_patterns
+    name: "Java Design Patterns Catalog"
+    category: architecture_patterns
+    enabled: true
+    type: git_repository
+    url: "https://github.com/iluwatar/java-design-patterns.git"
+    license_id: "MIT"
+    language: en
+    include_patterns:
+      - "**/*.md"
+    exclude_patterns:
+      - "node_modules/**"
+      - "target/**"
+      - ".github/**"
+      - "LICENSE*"
+    metadata:
+      repository_owner: "iluwatar"
+      domain: "software architecture patterns"
+
+  - id: etcd_docs
+    name: "etcd Distributed Systems Documentation"
+    category: distributed_systems
+    enabled: true
+    type: git_repository
+    url: "https://github.com/etcd-io/etcd.git"
+    license_id: "Apache-2.0"
+    language: en
+    include_patterns:
+      - "Documentation/**/*.md"
+    exclude_patterns:
+      - "Documentation/dev-guide/**"
+      - "LICENSE*"
+    metadata:
+      repository_owner: "etcd-io"
+      domain: "distributed systems"
+
+  - id: cloud_events_spec
+    name: "CloudEvents Specification & Event-Driven Architecture"
+    category: messaging
+    enabled: true
+    type: git_repository
+    url: "https://github.com/cloudevents/spec.git"
+    license_id: "Apache-2.0"
+    language: en
+    include_patterns:
+      - "**/*.md"
+    exclude_patterns:
+      - ".github/**"
+      - "LICENSE*"
+    metadata:
+      repository_owner: "cloudevents"
+      domain: "messaging/event-driven systems"
+
+  - id: dapr_docs
+    name: "Dapr Distributed Application Runtime Architecture Docs"
+    category: cloud_architecture
+    enabled: true
+    type: git_repository
+    url: "https://github.com/dapr/docs.git"
+    license_id: "CC0-1.0"
+    language: en
+    include_patterns:
+      - "daprdocs/content/en/**/*.md"
+    exclude_patterns:
+      - "LICENSE*"
+    metadata:
+      repository_owner: "dapr"
+      domain: "cloud architecture"
+
+  - id: kubernetes_keps
+    name: "Kubernetes Architectural Enhancements & Proposals (KEPs)"
+    category: cloud_architecture
+    enabled: true
+    type: git_repository
+    url: "https://github.com/kubernetes/enhancements.git"
+    license_id: "Apache-2.0"
+    language: en
+    include_patterns:
+      - "keps/**/*.md"
+    exclude_patterns:
+      - "**/template.md"
+      - "LICENSE*"
+    metadata:
+      repository_owner: "kubernetes"
+      domain: "cloud architecture"
+
+  - id: clickhouse_docs
+    name: "ClickHouse Database Architecture Documentation"
+    category: database_architecture
+    enabled: true
+    type: git_repository
+    url: "https://github.com/ClickHouse/ClickHouse.git"
+    license_id: "Apache-2.0"
+    language: en
+    include_patterns:
+      - "docs/en/**/*.md"
+    exclude_patterns:
+      - "LICENSE*"
+    metadata:
+      repository_owner: "ClickHouse"
+      domain: "database architecture"
+
+  - id: resilience4j_docs
+    name: "Resilience4j Fault Tolerance Documentation"
+    category: reliability
+    enabled: true
+    type: git_repository
+    url: "https://github.com/resilience4j/resilience4j.git"
+    license_id: "Apache-2.0"
+    language: en
+    include_patterns:
+      - "README.adoc"
+      - "resilience4j-*/README.adoc"
+    exclude_patterns:
+      - "LICENSE*"
+      - "CONTRIBUTING.adoc"
+      - "RELEASENOTES.adoc"
+    metadata:
+      repository_owner: "resilience4j"
+      domain: "reliability/resilience"
+
+  - id: adr_organization_docs
+    name: "Architecture Decision Record (ADR) Guides"
+    category: adr
+    enabled: false
+    type: git_repository
+    url: "https://github.com/joelparkerhenderson/architecture-decision-record.git"
+    license_id: "CC-BY-NC-SA-4.0"
+    language: en
+    include_patterns:
+      - "docs/**/*.md"
+    exclude_patterns:
+      - "LICENSE*"
+      - "docs/decisions/adr-template.md"
+    metadata:
+      repository_owner: "joelparkerhenderson"
+      domain: "architecture decision records"
+      disabled_reason: "Repository LICENSE.md declares CC BY-NC-SA 4.0 containing non-commercial restrictions incompatible with open pretraining distribution."
+
+  - id: madr_docs
+    name: "Markdown Architectural Decision Records (MADR)"
+    category: adr
+    enabled: true
+    type: git_repository
+    url: "https://github.com/adr/madr.git"
+    license_id: "MIT"
+    language: en
+    include_patterns:
+      - "docs/**/*.md"
+    exclude_patterns:
+      - "LICENSE*"
+      - "docs/decisions/adr-template.md"
+    metadata:
+      repository_owner: "adr"
+      domain: "architecture decision records"
+
+  - id: ddd_crew_resources
+    name: "DDD Crew Domain-Driven Design Resources"
+    category: domain_driven_design
+    enabled: false
+    type: git_repository
+    url: "https://github.com/ddd-crew/free-ddd-learning-resources.git"
+    license_id: "CC-BY-SA-4.0"
+    language: en
+    include_patterns:
+      - "**/*.md"
+    exclude_patterns:
+      - "LICENSE*"
+    metadata:
+      repository_owner: "ddd-crew"
+      domain: "domain-driven design"
+      disabled_reason: "DDD_DATA_INSUFFICIENT=true: repository currently contains only a license and an external-links README, not sufficiently licensed explanatory DDD prose."
+
+  # Disabled sources documenting unverified licenses or commercial restriction
+  - id: commercial_architecture_blog
+    name: "Arbitrary Commercial Architecture Blog"
+    category: architecture_patterns
+    enabled: false
+    type: http_documentation
+    url: "https://example.com/blog/architecture"
+    license_id: null
+    language: en
+    metadata:
+      disabled_reason: "License unclear and contains commercial blog posts without explicit open license. Kept disabled per copyright guidelines."
+
+curation:
+  tokenizer:
+    identifier: "Qwen/Qwen3-8B"
+    revision: "main"
+    fallback_allowed_in_prod: false
+
+  minhash_lsh:
+    num_perm: 128
+    shingle_size: 5
+    similarity_threshold: 0.85
+    num_bands: 16
+    rows_per_band: 8
+
+  balancing:
+    max_source_token_share: 0.30
+    max_category_token_share: 0.40
+    max_organization_token_share: 0.40
+    category_targets:
+      architecture_patterns:
+        min_token_share: 0.10
+      distributed_systems:
+        min_token_share: 0.10
+      cloud_architecture:
+        min_token_share: 0.10
+      database_architecture:
+        min_token_share: 0.05
+      messaging:
+        min_token_share: 0.05
+
+  quality:
+    min_document_score: 0.45
+    weights:
+      technical_vocab_density: 0.25
+      tradeoff_keyword_density: 0.25
+      natural_prose_density: 0.20
+      heading_structure_density: 0.15
+      code_to_prose_balance: 0.15
+
+  code_to_prose:
+    max_code_token_ratio: 0.70
+
+  split:
+    train_ratio: 0.95
+    validation_ratio: 0.05
+    holdout_ratio: 0.00
+    seed: 42
+
+
+
+

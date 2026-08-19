@@ -1,0 +1,28 @@
+benchmark_version: "architectai-bench-v1"
+dataset_path: "data/benchmark/architectai_v1.jsonl"
+results_dir: "data/benchmark/results/baseline"
+
+model:
+  identifier: "Qwen/Qwen3-8B"
+  revision: "main"
+  tokenizer_identifier: "Qwen/Qwen3-8B"
+  quantization: "none" # "none", "4bit", "8bit"
+  dtype: "bfloat16"
+  device: "cuda"
+
+generation:
+  # Qwen3 defaults to thinking=True. The frozen benchmark deliberately disables
+  # it so greedy deterministic decoding is a valid, repeatable comparison.
+  enable_thinking: false
+  temperature: 0.0
+  do_sample: false
+  max_new_tokens: 768
+
+evaluator:
+  type: "deterministic_proxy_v1"
+  unsupported_claim_penalty: 0.5
+
+audit:
+  min_easy: 5
+  min_medium: 10
+  min_hard: 10

@@ -1,0 +1,61 @@
+# Stage 5 pilot defaults. Hardware inspection in Colab decides the actual mode.
+model:
+  identifier: "Qwen/Qwen3-8B"
+  revision: "main"
+tokenizer:
+  identifier: "Qwen/Qwen3-8B"
+  revision: "main"
+data:
+  train_path: "data/training/packed/train.jsonl"
+  validation_path: "data/training/packed/validation.jsonl"
+  sequence_length: 2048
+training:
+  output_dir: "outputs/dapt-smoke"
+  seed: 42
+  gradient_checkpointing: true
+  bf16: auto
+  fp16: auto
+  gradient_accumulation_steps: 8
+  # Conservative raw-document DAPT defaults. Promote only after the behavior gate passes.
+  learning_rate: 0.000005
+  warmup_ratio: 0.10
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  logging_steps: 5
+  eval_steps: 10
+  save_steps: 10
+  max_steps: 20
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  safety_grad_norm: 1000.0
+optimizer:
+  name: "adamw_torch"
+scheduler:
+  name: "linear"
+strategy:
+  mode: "qlora" # conservative default; preflight must still confirm compatible CUDA hardware
+lora:
+  # q/v only is deliberately conservative to preserve instruction behavior.
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: ["q_proj", "v_proj"]
+quantization:
+  qlora_load_in_4bit: true
+checkpointing:
+  save_optimizer_state: true
+  save_scheduler_state: true
+evaluation:
+  max_validation_batches: 8
+  # Mandatory real base-vs-adapter gate after every adapter smoke run.
+  # This remains the full frozen 80-case v1 promotion gate.
+  quality_gate_enabled: true
+  benchmark_dataset_path: "data/benchmark/architectai_v1.jsonl"
+  benchmark_results_dir: "data/benchmark/results/dapt_gate"
+  # The reported 12-case diagnostic set is optional and runs separately, after
+  # the 80-case gate. Supply its frozen JSONL path in Colab; do not replace v1.
+  diagnostic_dataset_path: null
+  # QLoRA gate inference must not retain a second bf16 8B model in VRAM.
+  benchmark_quantization: "4bit"
+  benchmark_dtype: "float16"
+  benchmark_device: "cuda"
