@@ -21,6 +21,20 @@ class CorpusDocument(BaseModel):
     title: str | None = Field(default=None, description="Document title if available")
     text: str = Field(description="Raw or cleaned document text content")
     language: str = Field(default="en", description="Document language code")
+    # Optional v2 fields keep frozen records self-describing while preserving
+    # compatibility with the original JSONL schema.
+    source_name: str | None = None
+    source_path: str | None = None
+    relative_path: str | None = None
+    verified_license_id: str | None = None
+    section_title: str | None = None
+    token_count: int | None = None
+    content_sha256: str | None = None
+    quality_score: float | None = None
+    architecture_relevance_score: float | None = None
+    code_ratio: float | None = None
+    source_priority: float | None = None
+    corpus_version: str | None = None
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary provenance metadata (authors, commit, ingest date, etc.)",

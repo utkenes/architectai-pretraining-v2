@@ -13,6 +13,15 @@ class RelevanceCheckResult:
     category: str | None = None
 
 
+@dataclass
+class ArchitectureRelevanceScore:
+    score: float
+    passed: bool
+    reasons: list[str]
+    link_ratio: float
+    prose_density: float
+
+
 NON_RELEVANT_PATH_PATTERNS = [
     r"contributing\.md$",
     r"code_of_conduct\.md$",
@@ -85,3 +94,61 @@ class DomainRelevanceGate:
                 )
 
         return RelevanceCheckResult(is_relevant=True, reason=None, category=None)
+
+
+class ArchitectureRelevanceScorer:
+    """Score explanatory architecture reasoning without relying on keywords alone."""
+
+    SIGNALS = {
+        "trade-off", "tradeoff", "alternative", "decision", "consequence", "constraint",
+        "scalability", "consistency", "availability", "latency", "throughput", "failure",
+        "replication", "partition", "transaction", "idempotency", "retry", "timeout",
+        "resilience", "coupling", "cohesion", "boundary", "module", "service", "deployment",
+        "data model", "storage", "queue", "messaging", "reliability", "maintainability",
+        "migration", "rationale", "fault tolerance", "event-driven",
+    }
+
+    def __init__(self, min_score: float = 0.40, max_link_ratio: float = 0.22) -> None:
+        self.min_score = min_score
+        self.max_link_ratio = max_link_ratio
+
+    def score(self, doc: CorpusDocument) -> ArchitectureRelevanceScore:
+        text = doc.text.lower()
+        words = re.findall(r"\b[a-z][a-z-]*\b", text)
+        lines = [line.strip() for line in doc.text.splitlines() if line.strip()]
+        word_count = max(1, len(words))
+        signal_hits = sum(text.count(signal) for signal in self.SIGNALS)
+        signal_score = min(1.0, signal_hits / max(2.0, word_count / 85.0))
+        sentence_count = len(re.findall(r"[.!?](?:\s|$)", doc.text))
+        prose_density = min(1.0, sentence_count / max(1.0, len(lines) * 0.35))
+        heading_count = sum(1 for line in lines if re.match(r"^(#{1,6}\s|={1,6}\s)", line))
+        structure_score = min(1.0, heading_count / 3.0)
+        adr_labels = sum(
+            1 for label in ("context", "decision", "consequences", "alternatives", "status", "rationale")
+            if re.search(rf"(?im)^#{1,6}\s+{label}\b|^{label}\s*$", doc.text)
+        )
+        adr_score = min(1.0, adr_labels / 3.0)
+        links = len(re.findall(r"https?://|\[[^\]]+\]\([^)]*\)", doc.text))
+        link_ratio = links / max(1, len(lines))
+        code_lines = sum(1 for line in lines if line.startswith(("```", "    ", "\t")))
+        code_penalty = min(1.0, code_lines / max(1, len(lines)))
+        link_penalty = min(1.0, link_ratio / max(self.max_link_ratio, 0.001))
+        score = 0.38 * signal_score + 0.25 * prose_density + 0.18 * structure_score + 0.19 * adr_score
+        score -= 0.25 * link_penalty + 0.20 * code_penalty
+        score = round(max(0.0, min(1.0, score)), 4)
+        reasons: list[str] = []
+        if signal_hits:
+            reasons.append(f"{signal_hits} architecture-reasoning signals")
+        if adr_labels >= 2:
+            reasons.append("ADR decision structure")
+        if link_ratio > self.max_link_ratio:
+            reasons.append("link-heavy reference material")
+        if code_penalty > 0.5:
+            reasons.append("code-heavy material")
+        return ArchitectureRelevanceScore(
+            score=score,
+            passed=score >= self.min_score and link_ratio <= self.max_link_ratio,
+            reasons=reasons,
+            link_ratio=round(link_ratio, 4),
+            prose_density=round(prose_density, 4),
+        )

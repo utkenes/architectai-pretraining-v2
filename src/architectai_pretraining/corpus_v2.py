@@ -1,0 +1,426 @@
+"""Audit-first preparation of the external architecture corpus.
+
+This module deliberately stops at frozen DAPT text records.  It never creates
+chat/SFT examples and it never reads the benchmark as an input source.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from architectai_pretraining.cleaner import BoilerplateCleaner, TextCleaner
+from architectai_pretraining.code_prose import CodeProseAnalyzer
+from architectai_pretraining.dedup import ExactDeduplicator
+from architectai_pretraining.io import write_dict_jsonl, write_jsonl
+from architectai_pretraining.models import CorpusDocument
+from architectai_pretraining.near_dedup import MinHashLSHDeduplicator
+from architectai_pretraining.relevance import ArchitectureRelevanceScorer, DomainRelevanceGate
+from architectai_pretraining.scoring import DocumentQualityScorer
+from architectai_pretraining.sources import (
+    SourceConfig,
+    _resolve_configured_path,
+    get_adapter,
+    load_source_manifest,
+    verify_repository_license,
+)
+from architectai_pretraining.splitter import GroupCorpusSplitter
+from architectai_pretraining.tokenizer import (
+    CachingTokenCounter,
+    HuggingFaceTokenCounter,
+    TokenCounter,
+)
+
+
+@dataclass(frozen=True)
+class CorpusV2Config:
+    config_path: Path
+    corpus_version: str
+    target_tokens: int
+    token_tolerance: float
+    seed: int
+    tokenizer_identifier: str
+    tokenizer_revision: str
+    max_section_tokens: int
+    min_relevance_score: float
+    max_link_ratio: float
+    max_code_ratio: float
+    max_source_share: float
+    category_targets: dict[str, float]
+    split_ratios: tuple[float, float, float]
+    source_configs: list[SourceConfig]
+
+
+def load_corpus_v2_config(path: str | Path) -> CorpusV2Config:
+    config_path = Path(path)
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    tokenizer = data.get("tokenizer", {})
+    quality = data.get("quality", {})
+    balancing = data.get("balancing", {})
+    split = data.get("split", {})
+    targets = {
+        key: float(value)
+        for key, value in (balancing.get("category_token_targets") or {}).items()
+    }
+    if not targets:
+        raise ValueError("corpus_v2 requires balancing.category_token_targets")
+    if abs(sum(targets.values()) - 1.0) > 0.001:
+        raise ValueError("Category token targets must sum to 1.0.")
+    return CorpusV2Config(
+        config_path=config_path,
+        corpus_version=str(data["corpus_version"]),
+        target_tokens=int(data.get("target_tokens", 1_000_000)),
+        token_tolerance=float(data.get("token_tolerance", 0.05)),
+        seed=int(data.get("seed", 42)),
+        tokenizer_identifier=str(tokenizer.get("identifier", "Qwen/Qwen3-8B")),
+        tokenizer_revision=str(tokenizer.get("revision", "main")),
+        max_section_tokens=int(data.get("max_section_tokens", 2400)),
+        min_relevance_score=float(quality.get("min_architecture_relevance_score", 0.40)),
+        max_link_ratio=float(quality.get("max_link_ratio", 0.22)),
+        max_code_ratio=float(quality.get("max_code_ratio", 0.55)),
+        max_source_share=float(balancing.get("max_source_token_share", 0.15)),
+        category_targets=targets,
+        split_ratios=(
+            float(split.get("train_ratio", 0.90)),
+            float(split.get("validation_ratio", 0.05)),
+            float(split.get("heldout_ratio", 0.05)),
+        ),
+        source_configs=load_source_manifest(config_path),
+    )
+
+
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _distribution(docs: list[CorpusDocument]) -> dict[str, dict[str, dict[str, float | int]]]:
+    total = max(1, sum(doc.token_count or 0 for doc in docs))
+    result: dict[str, dict[str, dict[str, float | int]]] = {}
+    for key in ("sources", "categories"):
+        counts: dict[str, dict[str, float | int]] = defaultdict(lambda: {"documents": 0, "tokens": 0})
+        for doc in docs:
+            value = doc.source_id if key == "sources" else doc.category
+            counts[value]["documents"] = int(counts[value]["documents"]) + 1
+            counts[value]["tokens"] = int(counts[value]["tokens"]) + int(doc.token_count or 0)
+        result[key] = {
+            name: {**stats, "share": round(int(stats["tokens"]) / total, 4)}
+            for name, stats in sorted(counts.items())
+        }
+    return result
+
+
+def _sectionize(doc: CorpusDocument, counter: TokenCounter, max_tokens: int) -> list[CorpusDocument]:
+    """Split only at semantic headings, then paragraphs if one section is huge."""
+    group_id = str(doc.metadata.get("provenance_group_id") or doc.id)
+    text = doc.text
+    if counter.count(text) <= max_tokens:
+        return [doc.model_copy(update={"metadata": {**doc.metadata, "provenance_group_id": group_id}})]
+    parts = re.split(r"(?m)(?=^(?:#{1,6}\s+|={1,6}\s+))", text)
+    sections: list[tuple[str | None, str]] = []
+    current_title: str | None = None
+    for part in parts:
+        if not part.strip():
+            continue
+        first = part.splitlines()[0].strip()
+        if re.match(r"^(#{1,6}\s+|={1,6}\s+)", first):
+            current_title = re.sub(r"^(#{1,6}\s+|={1,6}\s+)", "", first).strip()
+        sections.append((current_title, part.strip()))
+    if not sections:
+        sections = [(doc.title, text)]
+    output: list[CorpusDocument] = []
+    for section_title, section in sections:
+        paragraphs = re.split(r"\n{2,}", section)
+        chunk: list[str] = []
+        for paragraph in paragraphs:
+            prospective = "\n\n".join(chunk + [paragraph]).strip()
+            if chunk and counter.count(prospective) > max_tokens:
+                output.append(_derived_section(doc, group_id, section_title, "\n\n".join(chunk), len(output)))
+                chunk = [paragraph]
+            else:
+                chunk.append(paragraph)
+        if chunk:
+            output.append(_derived_section(doc, group_id, section_title, "\n\n".join(chunk), len(output)))
+    return output
+
+
+def _derived_section(
+    doc: CorpusDocument, group_id: str, section_title: str | None, text: str, index: int
+) -> CorpusDocument:
+    digest = _content_hash(f"{doc.id}:{index}:{text}")[:16]
+    return doc.model_copy(
+        update={
+            "id": digest,
+            "text": text,
+            "section_title": section_title,
+            "metadata": {**doc.metadata, "provenance_group_id": group_id, "section_index": index},
+        }
+    )
+
+
+class CorpusV2Pipeline:
+    """Deterministic audit, preview, and explicit freeze workflow."""
+
+    def __init__(self, config_path: str | Path = "configs/corpus_v2.yaml", token_counter: TokenCounter | None = None) -> None:
+        self.config = load_corpus_v2_config(config_path)
+        self._counter = CachingTokenCounter(token_counter) if token_counter else None
+
+    @property
+    def counter(self) -> CachingTokenCounter:
+        """Load the real tokenizer only when text preparation actually starts."""
+        if self._counter is None:
+            self._counter = CachingTokenCounter(
+                HuggingFaceTokenCounter(
+                    self.config.tokenizer_identifier,
+                    self.config.tokenizer_revision,
+                    fallback_allowed_in_prod=False,
+                )
+            )
+        return self._counter
+
+    def inventory(self) -> dict[str, Any]:
+        sources: list[dict[str, Any]] = []
+        for source in self.config.source_configs:
+            root = _resolve_configured_path(source.path) if source.path else None
+            files = get_adapter(source).list_candidate_files() if source.enabled else []
+            raw_bytes = sum(path.stat().st_size for path in files)
+            verification = verify_repository_license(root, source.license_id) if root and root.is_dir() else None
+            sources.append(
+                {
+                    "source_id": source.id,
+                    "enabled": source.enabled,
+                    "category": source.category,
+                    "root": str(root) if root else None,
+                    "candidate_files": len(files),
+                    "raw_bytes": raw_bytes,
+                    "estimated_tokens": raw_bytes // 4,
+                    "license_id": source.license_id,
+                    "license_verified": verification.is_valid if verification else False,
+                    "license_issue": verification.error_message if verification and not verification.is_valid else None,
+                    "parser": source.parser,
+                    "notes": source.notes,
+                }
+            )
+        return {"corpus_version": self.config.corpus_version, "sources": sources}
+
+    def write_inventory(self, output_dir: str | Path) -> dict[str, Any]:
+        result = self.inventory()
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "inventory.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return result
+
+    def build(self, target_tokens: int, output_dir: str | Path, *, frozen: bool) -> dict[str, Any]:
+        if target_tokens < 1:
+            raise ValueError("target_tokens must be positive")
+        ledger: list[dict[str, Any]] = []
+        raw_docs: list[CorpusDocument] = []
+        policies = {source.id: source for source in self.config.source_configs}
+        for source in self.config.source_configs:
+            if not source.enabled:
+                ledger.append({"decision": "source_disabled", "source_id": source.id, "reason": source.notes})
+                continue
+            docs = get_adapter(source).ingest()
+            if not docs:
+                ledger.append({"decision": "source_no_documents", "source_id": source.id, "reason": "No eligible files or license verification failed."})
+            raw_docs.extend(docs)
+
+        cleaner = TextCleaner()
+        boilerplate = BoilerplateCleaner()
+        candidates: list[CorpusDocument] = []
+        for raw in raw_docs:
+            cleaned = boilerplate.clean_document(cleaner.clean_document(raw))
+            candidates.extend(_sectionize(cleaned, self.counter, self.config.max_section_tokens))
+
+        relevance = ArchitectureRelevanceScorer(self.config.min_relevance_score, self.config.max_link_ratio)
+        domain_gate = DomainRelevanceGate()
+        quality = DocumentQualityScorer(min_document_score=0.45)
+        code = CodeProseAnalyzer(self.config.max_code_ratio)
+        accepted: list[CorpusDocument] = []
+        score_map: dict[str, float] = {}
+        for doc in candidates:
+            base = domain_gate.check(doc)
+            rel = relevance.score(doc)
+            quality_score = quality.score(doc)
+            code_metrics = code.analyze(doc, self.counter)
+            reasons: list[str] = []
+            if not base.is_relevant:
+                reasons.append(base.reason or "domain relevance rejected")
+            if not rel.passed:
+                reasons.append("; ".join(rel.reasons) or "architecture relevance below threshold")
+            if quality_score.quality_bucket == "low":
+                reasons.append("quality score below threshold")
+            if code_metrics.is_code_dominated:
+                reasons.append("code ratio exceeds configured threshold")
+            enriched = doc.model_copy(
+                update={
+                    "token_count": self.counter.count(doc.text),
+                    "content_sha256": _content_hash(doc.text),
+                    "quality_score": quality_score.quality_score,
+                    "architecture_relevance_score": rel.score,
+                    "code_ratio": code_metrics.code_to_prose_ratio,
+                    "corpus_version": self.config.corpus_version,
+                    "source_priority": policies[doc.source_id].source_priority,
+                    "source_name": doc.source_name or policies[doc.source_id].name,
+                    "relative_path": doc.relative_path or str(doc.metadata.get("relative_path", "")),
+                    "verified_license_id": doc.verified_license_id or doc.metadata.get("verified_license_id"),
+                }
+            )
+            record = {
+                "document_id": enriched.id, "source_id": enriched.source_id, "category": enriched.category,
+                "relative_path": enriched.relative_path, "token_count": enriched.token_count,
+                "quality_score": enriched.quality_score, "architecture_relevance_score": rel.score,
+                "code_ratio": enriched.code_ratio, "link_ratio": rel.link_ratio,
+            }
+            if reasons:
+                ledger.append({**record, "decision": "rejected", "reason": "; ".join(reasons)})
+            else:
+                accepted.append(enriched)
+                score_map[enriched.id] = quality_score.quality_score + rel.score + policies[enriched.source_id].source_priority / 100
+                ledger.append({**record, "decision": "accepted", "reason": "; ".join(rel.reasons)})
+
+        # Stable best-record exact deduplication: better scored source wins, then ID.
+        ordered = sorted(accepted, key=lambda doc: (-score_map[doc.id], doc.id))
+        exact = ExactDeduplicator().deduplicate(ordered)
+        retained_exact = {doc.id for doc in exact.deduplicated_documents}
+        exact_canonical_by_hash = {doc.content_sha256: doc for doc in exact.deduplicated_documents}
+        for doc in ordered:
+            if doc.id not in retained_exact:
+                canonical = exact_canonical_by_hash.get(doc.content_sha256)
+                ledger.append({
+                    "document_id": doc.id, "source_id": doc.source_id, "relative_path": doc.relative_path,
+                    "decision": "exact_duplicate", "canonical_document_id": canonical.id if canonical else None,
+                    "canonical_source_id": canonical.source_id if canonical else None,
+                    "reason": "Identical normalized text; higher-ranked canonical record retained.",
+                })
+
+        near = MinHashLSHDeduplicator(similarity_threshold=0.85)
+        near_result = near.deduplicate(exact.deduplicated_documents, score_map)
+        exact_by_id = {doc.id: doc for doc in exact.deduplicated_documents}
+        for cluster in near_result.clusters:
+            for removed in cluster.removed_document_ids:
+                removed_doc = exact_by_id[removed]
+                canonical_doc = exact_by_id[cluster.canonical_document_id]
+                ledger.append({
+                    "document_id": removed, "source_id": removed_doc.source_id,
+                    "relative_path": removed_doc.relative_path, "decision": "near_duplicate", "cluster_id": cluster.cluster_id,
+                    "canonical_document_id": cluster.canonical_document_id,
+                    "canonical_source_id": canonical_doc.source_id,
+                    "canonical_relative_path": canonical_doc.relative_path,
+                    "similarity": cluster.estimated_similarity,
+                    "reason": "Near-duplicate; retained canonical has the highest deterministic quality/relevance/priority rank.",
+                })
+
+        selected, balanced_out = self._select(near_result.canonical_documents, target_tokens, policies)
+        for doc, reason in balanced_out:
+            ledger.append({"document_id": doc.id, "source_id": doc.source_id, "decision": "balanced_out", "reason": reason, "token_count": doc.token_count})
+        splitter = GroupCorpusSplitter(*self.config.split_ratios, seed=self.config.seed)
+        split = splitter.split(selected)
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        write_jsonl(split.train_documents, out / "train.jsonl")
+        write_jsonl(split.validation_documents, out / "validation.jsonl")
+        write_jsonl(split.heldout_documents, out / "heldout.jsonl")
+        write_dict_jsonl(ledger, out / "audit.jsonl")
+        manifest = self._manifest(target_tokens, selected, split, ledger, near_result, frozen)
+        (out / "corpus_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (out / "license_audit.json").write_text(json.dumps(self.inventory(), indent=2), encoding="utf-8")
+        return manifest
+
+    def _select(
+        self, docs: list[CorpusDocument], target_tokens: int, policies: dict[str, SourceConfig]
+    ) -> tuple[list[CorpusDocument], list[tuple[CorpusDocument, str]]]:
+        by_category: dict[str, list[CorpusDocument]] = defaultdict(list)
+        for doc in docs:
+            by_category[doc.category].append(doc)
+        for documents in by_category.values():
+            documents.sort(key=lambda doc: (-(doc.quality_score or 0) - (doc.architecture_relevance_score or 0), doc.id))
+        category_limits = {category: int(target_tokens * target) for category, target in self.config.category_targets.items()}
+        source_limits = {
+            source_id: min(
+                int(target_tokens * self.config.max_source_share),
+                policy.source_token_cap if policy.source_token_cap else target_tokens,
+            )
+            for source_id, policy in policies.items()
+        }
+        selected: list[CorpusDocument] = []
+        rejected: list[tuple[CorpusDocument, str]] = []
+        totals: Counter[str] = Counter()
+        source_totals: Counter[str] = Counter()
+        positions: Counter[str] = Counter()
+        while sum(doc.token_count or 0 for doc in selected) < target_tokens:
+            available = [category for category in self.config.category_targets if positions[category] < len(by_category[category])]
+            if not available:
+                break
+            category = max(available, key=lambda key: (category_limits[key] - totals[key], key))
+            doc = by_category[category][positions[category]]
+            positions[category] += 1
+            tokens = doc.token_count or 0
+            if source_totals[doc.source_id] + tokens > source_limits[doc.source_id]:
+                rejected.append((doc, "Source token cap reached."))
+                continue
+            if totals[category] + tokens > category_limits[category] + self.config.max_section_tokens:
+                rejected.append((doc, "Category target reached."))
+                continue
+            if sum(item.token_count or 0 for item in selected) + tokens > target_tokens + int(target_tokens * self.config.token_tolerance):
+                rejected.append((doc, "Target token tolerance reached."))
+                continue
+            selected.append(doc)
+            totals[category] += tokens
+            source_totals[doc.source_id] += tokens
+        # If a configured specialist category has no eligible licensed prose,
+        # use the remaining capacity of other categories rather than fabricate
+        # data or silently fail to produce a useful preview.  Source caps remain
+        # strict and the manifest exposes the resulting category shortfall.
+        selected_ids = {doc.id for doc in selected}
+        for doc in sorted(
+            docs,
+            key=lambda item: (
+                -((item.quality_score or 0.0) + (item.architecture_relevance_score or 0.0)),
+                item.id,
+            ),
+        ):
+            if sum(item.token_count or 0 for item in selected) >= target_tokens or doc.id in selected_ids:
+                continue
+            tokens = doc.token_count or 0
+            if source_totals[doc.source_id] + tokens > source_limits[doc.source_id]:
+                continue
+            if sum(item.token_count or 0 for item in selected) + tokens > target_tokens + int(target_tokens * self.config.token_tolerance):
+                continue
+            selected.append(doc)
+            selected_ids.add(doc.id)
+            totals[doc.category] += tokens
+            source_totals[doc.source_id] += tokens
+        return selected, [(doc, reason) for doc, reason in rejected if doc.id not in selected_ids]
+
+    def _manifest(self, target: int, docs: list[CorpusDocument], split: Any, ledger: list[dict[str, Any]], near: Any, frozen: bool) -> dict[str, Any]:
+        total = sum(doc.token_count or 0 for doc in docs)
+        decisions = Counter(str(item["decision"]) for item in ledger)
+        corpus_hash = hashlib.sha256("".join(sorted(doc.content_sha256 or "" for doc in docs)).encode()).hexdigest()
+        return {
+            "corpus_version": self.config.corpus_version, "frozen": frozen,
+            "config_hash": hashlib.sha256(self.config.config_path.read_bytes()).hexdigest(),
+            "tokenizer": {"identifier": self.config.tokenizer_identifier, "revision": self.config.tokenizer_revision},
+            "target_tokens": target, "final_token_count": total, "corpus_hash": corpus_hash,
+            "source_distribution": _distribution(docs)["sources"],
+            "category_distribution": _distribution(docs)["categories"],
+            "rejected_counts": dict(sorted(decisions.items())),
+            "dedup": {"near_duplicate_clusters": len(near.clusters), "near_duplicate_documents": len(near.removed_documents)},
+            "splits": {
+                "train": {"documents": len(split.train_documents), "tokens": sum(doc.token_count or 0 for doc in split.train_documents)},
+                "validation": {"documents": len(split.validation_documents), "tokens": sum(doc.token_count or 0 for doc in split.validation_documents)},
+                "heldout": {"documents": len(split.heldout_documents), "tokens": sum(doc.token_count or 0 for doc in split.heldout_documents)},
+            },
+        }
+
+
+def load_audit(path: str | Path) -> list[dict[str, Any]]:
+    """Read a preview/freeze audit without treating the benchmark as corpus input."""
+    audit_path = Path(path) / "audit.jsonl"
+    return [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line]

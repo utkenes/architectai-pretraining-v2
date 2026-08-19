@@ -14,6 +14,13 @@ class SplitResult:
     validation_documents: list[CorpusDocument]
 
 
+@dataclass
+class GroupSplitResult:
+    train_documents: list[CorpusDocument]
+    validation_documents: list[CorpusDocument]
+    heldout_documents: list[CorpusDocument]
+
+
 class CorpusSplitter:
     """Splits CorpusDocument objects into train and validation sets deterministically.
 
@@ -72,3 +79,39 @@ class CorpusSplitter:
             val_docs = [item[1] for item in scored_docs[:-1]]
 
         return SplitResult(train_documents=train_docs, validation_documents=val_docs)
+
+
+class GroupCorpusSplitter:
+    """Deterministic three-way split that never separates a provenance group."""
+
+    def __init__(
+        self, train_ratio: float = 0.90, validation_ratio: float = 0.05, heldout_ratio: float = 0.05,
+        seed: int = 42,
+    ) -> None:
+        if min(train_ratio, validation_ratio, heldout_ratio) < 0:
+            raise ValueError("Split ratios cannot be negative.")
+        if abs(train_ratio + validation_ratio + heldout_ratio - 1.0) > 1e-9:
+            raise ValueError("Group split ratios must sum to 1.0.")
+        self.train_ratio = train_ratio
+        self.validation_ratio = validation_ratio
+        self.heldout_ratio = heldout_ratio
+        self.seed = seed
+
+    def split(self, documents: list[CorpusDocument]) -> GroupSplitResult:
+        groups: dict[str, list[CorpusDocument]] = {}
+        for doc in documents:
+            group_id = str(doc.metadata.get("provenance_group_id") or doc.id)
+            groups.setdefault(group_id, []).append(doc)
+        train: list[CorpusDocument] = []
+        validation: list[CorpusDocument] = []
+        heldout: list[CorpusDocument] = []
+        for group_id in sorted(groups):
+            digest = hashlib.sha256(f"{self.seed}:{group_id}".encode()).digest()
+            score = int.from_bytes(digest[:8], "big") / 2**64
+            if score < self.train_ratio:
+                train.extend(groups[group_id])
+            elif score < self.train_ratio + self.validation_ratio:
+                validation.extend(groups[group_id])
+            else:
+                heldout.extend(groups[group_id])
+        return GroupSplitResult(train, validation, heldout)

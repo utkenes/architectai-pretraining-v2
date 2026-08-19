@@ -35,6 +35,12 @@ class SourceConfig:
     language: str = "en"
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
+    allowed_content_types: list[str] | None = None
+    parser: str | None = None
+    source_token_cap: int | None = None
+    source_priority: float = 1.0
+    notes: str | None = None
+    verify_license: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -57,6 +63,11 @@ def detect_spdx_license(text: str) -> str | None:
 
     if "MIT OR CC0" in text_strip or "CC0 OR MIT" in text_strip:
         return "MIT"
+
+    # Check Apache before generic prose below: Apache 2.0's legal text can
+    # mention third-party/Creative Commons material in a notice.
+    if "apache license" in text_lower and ("version 2.0" in text_lower or "v2.0" in text_lower):
+        return "Apache-2.0"
 
     # Creative Commons licenses - check ShareAlike & NonCommercial specifically before standard BY
     if "creative commons" in text_lower or "cc-" in text_lower or "attribution" in text_lower:
@@ -83,9 +94,6 @@ def detect_spdx_license(text: str) -> str | None:
 
     if "mit license" in text_lower or "permission is hereby granted, free of charge" in text_lower or text_strip == "MIT":
         return "MIT"
-
-    if "apache license" in text_lower and ("version 2.0" in text_lower or "v2.0" in text_lower):
-        return "Apache-2.0"
 
     if "bsd 3-clause" in text_lower or (
         "redistribution and use in source" in text_lower and "neither the name" in text_lower
@@ -235,7 +243,7 @@ def matches_patterns(
                     return True
         return False
 
-    return filepath.suffix.lower() in {".md", ".markdown", ".txt", ".adoc"}
+    return filepath.suffix.lower() in {".md", ".markdown", ".txt", ".adoc", ".rst"}
 
 
 def extract_sparse_checkout_dirs(include_patterns: list[str] | None) -> list[str]:
@@ -285,9 +293,7 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
         if not self.config.path:
             return []
 
-        dir_path = Path(self.config.path)
-        if not dir_path.is_absolute():
-            dir_path = Path.cwd() / dir_path
+        dir_path = _resolve_configured_path(self.config.path)
 
         if not dir_path.exists() or not dir_path.is_dir():
             return []
@@ -296,7 +302,7 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
         for p in dir_path.rglob("*"):
             if p.is_file() and matches_patterns(
                 p, dir_path, self.config.include_patterns, self.config.exclude_patterns
-            ):
+            ) and _matches_allowed_content_type(p, self.config.allowed_content_types):
                 filepaths.append(p)
 
         return sorted(filepaths)
@@ -307,18 +313,21 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
                 f"Source '{self.config.id}' of type {self.config.type} requires 'path'"
             )
 
-        dir_path = Path(self.config.path)
-        if not dir_path.is_absolute():
-            dir_path = Path.cwd() / dir_path
+        dir_path = _resolve_configured_path(self.config.path)
+
+        verification = _verify_local_source_license(dir_path, self.config)
+        if verification is not None and not verification.is_valid:
+            logger.warning("[LICENSE REJECTED] Source '%s': %s", self.config.id, verification.error_message)
+            return []
 
         filepaths = self.list_candidate_files()
         documents: list[CorpusDocument] = []
 
         for filepath in filepaths:
             try:
-                content = filepath.read_text(encoding="utf-8")
+                content = _read_source_text(filepath, self.config.parser)
             except Exception:
-                content = filepath.read_text(encoding="utf-8", errors="replace")
+                content = _read_source_text(filepath, self.config.parser, errors="replace")
 
             if not content.strip():
                 continue
@@ -328,12 +337,15 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
             doc_id = hashlib.sha256(doc_id_input.encode("utf-8")).hexdigest()[:16]
 
             title = _extract_markdown_title(content, filepath.stem)
+            verified_license_id = (
+                verification.verified_license_id if verification is not None else self.config.license_id
+            )
 
             doc = CorpusDocument(
                 id=doc_id,
                 source_id=self.config.id,
                 source_url=self.config.url or f"file://{filepath.as_posix()}",
-                license_id=self.config.license_id,
+                license_id=verified_license_id,
                 category=self.config.category,
                 title=title,
                 text=content,
@@ -342,11 +354,17 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
                     "file_name": filepath.name,
                     "relative_path": rel_path,
                     "source_name": self.config.name,
-                    "license_source": "declared_manifest",
-                    "verified_license_id": self.config.license_id,
+                    "source_path": str(filepath),
+                    "license_source": verification.license_source if verification else "declared_manifest",
+                    "verified_license_id": verified_license_id,
                     "verified_commit_sha": "local",
                     **self.config.metadata,
                 },
+                source_name=self.config.name,
+                source_path=str(filepath),
+                relative_path=rel_path,
+                verified_license_id=verified_license_id,
+                source_priority=self.config.source_priority,
             )
             documents.append(doc)
 
@@ -592,7 +610,10 @@ class HTMLBoilerplateCleaner(HTMLParser):
         self.tag_stack: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tag_stack.append(tag.lower())
+        normalized = tag.lower()
+        self.tag_stack.append(normalized)
+        if normalized in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "pre", "blockquote"}:
+            self.output.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
         if self.tag_stack and self.tag_stack[-1] == tag.lower():
@@ -601,12 +622,20 @@ class HTMLBoilerplateCleaner(HTMLParser):
     def handle_data(self, data: str) -> None:
         if any(t in self.IGNORED_TAGS for t in self.tag_stack):
             return
-        cleaned = data.strip()
+        cleaned = " ".join(data.split())
         if cleaned:
-            self.output.append(cleaned)
+            tag = self.tag_stack[-1] if self.tag_stack else ""
+            if tag.startswith("h") and len(tag) == 2 and tag[1].isdigit():
+                self.output.append("#" * int(tag[1]) + " " + cleaned)
+            elif tag == "li":
+                self.output.append("- " + cleaned)
+            elif tag in {"pre", "code"}:
+                self.output.append("```\n" + cleaned + "\n```")
+            else:
+                self.output.append(cleaned)
 
     def get_text(self) -> str:
-        return "\n\n".join(self.output)
+        return "\n".join(self.output)
 
 
 class HttpDocumentationSourceAdapter(BaseSourceAdapter):
@@ -672,6 +701,50 @@ def _extract_markdown_title(content: str, default_stem: str) -> str:
     return default_stem.replace("_", " ").replace("-", " ").title()
 
 
+def _resolve_configured_path(path: str) -> Path:
+    """Resolve YAML paths including ``${ARCHITECT_DATA_DIR}`` on Windows."""
+    expanded = os.path.expandvars(path)
+    marker = "${ARCHITECT_DATA_DIR}"
+    if marker in expanded:
+        expanded = expanded.replace(marker, os.getenv("ARCHITECT_DATA_DIR", marker))
+    result = Path(expanded)
+    return result if result.is_absolute() else Path.cwd() / result
+
+
+def _verify_local_source_license(
+    root: Path, config: SourceConfig
+) -> LicenseVerificationResult | None:
+    if not config.verify_license:
+        return None
+    return verify_repository_license(root, config.license_id)
+
+
+def _read_source_text(filepath: Path, parser: str | None, errors: str = "strict") -> str:
+    """Read configured content deterministically; HTML extraction is prose-first."""
+    raw = filepath.read_text(encoding="utf-8", errors=errors)
+    use_html = (parser or "").lower() == "html" or filepath.suffix.lower() in {".html", ".htm"}
+    if not use_html:
+        return raw
+    cleaner = HTMLBoilerplateCleaner()
+    cleaner.feed(raw)
+    return cleaner.get_text()
+
+
+def _matches_allowed_content_type(path: Path, allowed: list[str] | None) -> bool:
+    if not allowed:
+        return True
+    content_type = {
+        ".md": "markdown",
+        ".markdown": "markdown",
+        ".adoc": "asciidoc",
+        ".html": "html",
+        ".htm": "html",
+        ".txt": "text",
+        ".rst": "restructuredtext",
+    }.get(path.suffix.lower())
+    return content_type in {item.lower() for item in allowed}
+
+
 def get_adapter(
     config: SourceConfig, cache_dir: str | Path | None = None
 ) -> BaseSourceAdapter:
@@ -721,6 +794,12 @@ def load_source_manifest(config_path: str | Path) -> list[SourceConfig]:
             language=s_dict.get("language", "en"),
             include_patterns=s_dict.get("include_patterns"),
             exclude_patterns=s_dict.get("exclude_patterns"),
+            allowed_content_types=s_dict.get("allowed_content_types"),
+            parser=s_dict.get("parser"),
+            source_token_cap=s_dict.get("source_token_cap"),
+            source_priority=float(s_dict.get("source_priority", 1.0)),
+            notes=s_dict.get("notes"),
+            verify_license=bool(s_dict.get("verify_license", False)),
             metadata=s_dict.get("metadata", {}),
         )
         configs.append(config)
