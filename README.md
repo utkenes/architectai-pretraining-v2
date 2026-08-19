@@ -210,6 +210,32 @@ pytest -v
 
 ## 11. What Comes Next
 
+## Architecture corpus v2 (audit-first)
+
+The external architecture corpus is intentionally read-only and is not stored in
+this Git repository. Set its root explicitly on Windows, rather than relying on
+the project shortcut:
+
+```powershell
+$env:ARCHITECT_DATA_DIR = "D:\architect-data"
+architectai-pretraining corpus inventory --config configs/corpus_v2.yaml
+architectai-pretraining corpus preview --config configs/corpus_v2.yaml --target-tokens 20000
+architectai-pretraining corpus audit --output-dir data/corpus_v2/preview
+```
+
+`preview` uses the pinned `Qwen/Qwen3-8B` tokenizer and writes provenance-rich
+continuous-text JSONL plus an audit ledger. It is not a freeze. After human
+review, and only then, run:
+
+```powershell
+architectai-pretraining corpus freeze --config configs/corpus_v2.yaml --target-tokens 1000000
+```
+
+The v2 manifest records explicit per-source policies, licensing status,
+deduplication, source/category contribution, and a group-safe train/validation/
+held-out split. It never reads `data/benchmark/architectai_v1.jsonl` as corpus
+input and it never creates SFT/chat records.
+
 ## 12. Stage 4.1 / Colab preparation
 
 Production token counts use the pinned `Qwen/Qwen3-8B` tokenizer at revision `main`; approximate counters are test-only. Curate with the real tokenizer, then create and validate the transfer artifact before any model is loaded:
