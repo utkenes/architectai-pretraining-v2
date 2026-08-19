@@ -124,3 +124,24 @@ def test_local_source_ingests_asciidoc_with_heading(tmp_path: pytest.TempPathFac
     documents = LocalDirectorySourceAdapter(config).ingest()
     assert documents[0].title == "Circuit Breaker"
     assert documents[0].metadata["relative_path"] == "resilience.adoc"
+
+
+def test_local_html_chapter_extraction_removes_navigation(tmp_path: pytest.TempPathFactory) -> None:
+    docs_dir = tmp_path / "html_docs"  # type: ignore[operator]
+    raw = docs_dir / "raw"
+    raw.mkdir(parents=True)
+    (raw / "ch01.html").write_text(
+        "<nav>Table of contents</nav><h1>Retries</h1><p>Retries need timeout budgets.</p>"
+        "<script>ignored()</script><ul><li>Bound attempts</li></ul>",
+        encoding="utf-8",
+    )
+    config = SourceConfig(
+        id="html", name="HTML", category="reliability", type="local_directory", path=str(docs_dir),
+        license_id="CC-BY-4.0", parser="html", allowed_content_types=["html"],
+        include_patterns=["raw/ch*.html"],
+    )
+    document = LocalDirectorySourceAdapter(config).ingest()[0]
+    assert "# Retries" in document.text
+    assert "Retries need timeout budgets." in document.text
+    assert "Table of contents" not in document.text
+    assert "ignored" not in document.text
