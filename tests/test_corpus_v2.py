@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from architectai_pretraining.corpus_v2 import CorpusV2Pipeline
+from architectai_pretraining.corpus_v2 import CorpusV2Pipeline, load_corpus_v2_config
 from architectai_pretraining.models import CorpusDocument
 from architectai_pretraining.relevance import ArchitectureRelevanceScorer
 from architectai_pretraining.splitter import GroupCorpusSplitter
@@ -88,6 +88,8 @@ def test_inventory_and_preview_preserve_external_provenance(tmp_path: pytest.Tem
     assert docs[0].verified_license_id == "MIT"
     assert docs[0].content_sha256
     assert docs[0].token_count
+    assert (output / "experimental_manifest.json").exists()
+    assert (output / "release_eligible_manifest.json").exists()
     repeat = pipeline.build(500, tmp_path / "preview_repeat", frozen=False)  # type: ignore[operator]
     assert repeat["corpus_hash"] == manifest["corpus_hash"]
 
@@ -116,3 +118,22 @@ def test_group_split_keeps_section_siblings_together() -> None:
         for doc in split_docs
     }
     assert memberships["a"] == memberships["b"]
+
+
+def test_experimental_config_enables_all_sources() -> None:
+    config = load_corpus_v2_config("configs/corpus_v2.yaml")
+    assert len(config.source_configs) == 17
+    assert all(source.enabled for source in config.source_configs)
+
+
+def test_freeze_preflight_rejects_insufficient_capacity(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "external" / "reliable"  # type: ignore[operator]
+    root.mkdir(parents=True)
+    (root / "architecture.md").write_text("# Reliability\n\nRetries and timeouts protect availability." * 20, encoding="utf-8")
+    config = tmp_path / "corpus.yaml"  # type: ignore[operator]
+    _write_config(config)
+    monkeypatch.setenv("ARCHITECT_DATA_DIR", str(root.parent))
+    pipeline = CorpusV2Pipeline(config, token_counter=MockTokenCounter())
+    with pytest.raises(ValueError, match="Freeze preflight failed"):
+        pipeline.build(10_000, tmp_path / "freeze", frozen=True)  # type: ignore[operator]
+    assert not (tmp_path / "freeze").exists()  # type: ignore[operator]

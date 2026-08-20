@@ -117,6 +117,8 @@ def main() -> None:
     corpus_actions = corpus_parser.add_subparsers(dest="corpus_action", required=True)
     for action, help_text in (
         ("inventory", "Inspect source policies and license status without reading corpus prose"),
+        ("license-audit", "Write the experimental/release license review without curation"),
+        ("capacity", "Measure post-filter capacity and category coverage without freezing"),
         ("preview", "Build an auditable 10k-20k-token preview; does not freeze data"),
         ("freeze", "Explicitly create a deterministic frozen DAPT corpus"),
     ):
@@ -262,6 +264,12 @@ def main() -> None:
         pipeline_v2 = CorpusV2Pipeline(args.config)
         if args.corpus_action == "inventory":
             result = pipeline_v2.write_inventory(args.output_dir)
+            print(json.dumps(result, indent=2))
+        elif args.corpus_action == "license-audit":
+            result = pipeline_v2.write_license_audit(args.output_dir)
+            print(json.dumps(result, indent=2))
+        elif args.corpus_action == "capacity":
+            result = pipeline_v2.write_capacity(args.output_dir)
             print(json.dumps(result, indent=2))
         else:
             result = pipeline_v2.build(args.target_tokens, args.output_dir, frozen=args.corpus_action == "freeze")
