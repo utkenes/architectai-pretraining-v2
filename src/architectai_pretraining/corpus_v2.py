@@ -106,6 +106,22 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _normalize_structural_headings(doc: CorpusDocument) -> CorpusDocument:
+    """Normalize reStructuredText underline headings for common section logic.
+
+    This preserves the source prose while exposing chapter boundaries to the
+    semantic sectionizer, quality scorer, and configured section exclusions.
+    It is intentionally structural normalization, not a relevance threshold
+    change: non-prose and link-heavy sections still go through the same gates.
+    """
+    text = re.sub(
+        r"(?m)^(?P<title>[^\n]+)\n(?P<underline>[=\-`:'\"~^_*+#<>]{3,})\s*$",
+        lambda match: f"# {match.group('title').strip()}",
+        doc.text,
+    )
+    return doc.model_copy(update={"text": text}) if text != doc.text else doc
+
+
 def _license_concerns(status: str) -> list[str]:
     return {
         "approved": [],
@@ -182,10 +198,10 @@ def _derived_section(
 
 
 def _strip_policy_sections(doc: CorpusDocument, patterns: list[str] | None) -> CorpusDocument:
-    """Remove explicitly configured low-value Markdown sections before scoring."""
+    """Remove explicitly configured low-value Markdown/AsciiDoc sections before scoring."""
     if not patterns:
         return doc
-    parts = re.split(r"(?m)(?=^#{1,6}\s+)", doc.text)
+    parts = re.split(r"(?m)(?=^(?:#{1,6}\s+|={1,6}\s+))", doc.text)
     kept: list[str] = []
     lowered = tuple(pattern.lower() for pattern in patterns)
     for part in parts:
@@ -297,9 +313,10 @@ class CorpusV2Pipeline:
         candidates: list[CorpusDocument] = []
         for raw in raw_docs:
             source = policies[raw.source_id]
-            cleaned = _strip_policy_sections(
-                boilerplate.clean_document(cleaner.clean_document(raw)), source.strip_section_patterns
+            cleaned = _normalize_structural_headings(
+                boilerplate.clean_document(cleaner.clean_document(raw))
             )
+            cleaned = _strip_policy_sections(cleaned, source.strip_section_patterns)
             candidates.extend(
                 _assign_section_category(section, source.section_category_rules)
                 for section in _sectionize(cleaned, self.counter, self.config.max_section_tokens)
@@ -454,7 +471,9 @@ class CorpusV2Pipeline:
         boilerplate = BoilerplateCleaner()
         candidates: list[CorpusDocument] = []
         for raw in raw_docs:
-            cleaned = boilerplate.clean_document(cleaner.clean_document(raw))
+            cleaned = _normalize_structural_headings(
+                boilerplate.clean_document(cleaner.clean_document(raw))
+            )
             source = policies[raw.source_id]
             cleaned = _strip_policy_sections(cleaned, source.strip_section_patterns)
             candidates.extend(
