@@ -1,247 +1,57 @@
-# External, read-only architecture corpus.  ${ARCHITECT_DATA_DIR} is required
-# for production; use --corpus-root / ARCHITECT_DATA_DIR rather than the .lnk.
-corpus_version: architecture-corpus-v2
+# Read-only local experimental DAPT corpus. License uncertainty is preserved
+# as metadata and release_eligible controls later public/commercial filtering.
+corpus_version: architecture-corpus-v2-experimental
 target_tokens: 1000000
 token_tolerance: 0.05
 seed: 42
 max_section_tokens: 2400
-tokenizer:
-  identifier: Qwen/Qwen3-8B
-  revision: main
-quality:
-  min_architecture_relevance_score: 0.40
-  max_link_ratio: 0.22
-  max_code_ratio: 0.55
+tokenizer: {identifier: Qwen/Qwen3-8B, revision: main}
+quality: {min_architecture_relevance_score: 0.40, max_link_ratio: 0.22, max_code_ratio: 0.55}
 balancing:
   max_source_token_share: 0.15
-  category_token_targets:
-    software_architecture: 0.20
-    distributed_systems: 0.15
-    system_design: 0.10
-    reliability_resilience: 0.17
-    database_data_architecture: 0.17
-    adr_decision_reasoning: 0.15
-    domain_driven_design: 0.02
-    messaging_event_driven: 0.01
-    ai_agent_architecture: 0.01
-    networking_systems: 0.02
-split:
-  train_ratio: 0.90
-  validation_ratio: 0.05
-  heldout_ratio: 0.05
+  category_tolerance: 0.05
+  allow_preview_backfill: true
+  allow_freeze_backfill: false
+  category_token_targets: {software_architecture: 0.20, distributed_systems: 0.15, system_design: 0.10, reliability_resilience: 0.17, database_data_architecture: 0.17, adr_decision_reasoning: 0.15, domain_driven_design: 0.02, messaging_event_driven: 0.01, ai_agent_architecture: 0.01, networking_systems: 0.02}
+split: {train_ratio: 0.90, validation_ratio: 0.05, heldout_ratio: 0.05}
 
 sources:
-  - id: seven_edition
-    name: Computer Networks, 7th Edition
-    category: networking_systems
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/7E-main
-    license_id: CC-BY-4.0
-    verify_license: true
-    allowed_content_types: [restructuredtext]
-    include_patterns: ["*.rst"]
-    exclude_patterns: ["README*", "LICENSE*", "CONTRIBUTING*", "index.rst", "authors.rst", "chapters.rst", "_*/**", ".github/**"]
-    source_token_cap: 90000
-    source_priority: 1.0
-    notes: Chapter prose only; the newer overlapping book edition is ranked higher.
-
-  - id: book_edition
-    name: Computer Networks, newer book edition
-    category: networking_systems
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/book-master
-    license_id: CC-BY-4.0
-    verify_license: true
-    allowed_content_types: [restructuredtext]
-    include_patterns: ["*.rst"]
-    exclude_patterns: ["README*", "LICENSE*", "CONTRIBUTING*", "CLA.rst", "index.rst", "_*/**", ".github/**", "**/*slide*"]
-    source_token_cap: 100000
-    source_priority: 1.15
-    notes: Preferred edition for cross-source near duplicates with 7E.
-
-  - id: secure_reliable_systems
-    name: Building Secure and Reliable Systems
-    category: reliability_resilience
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/building-secure-and-reliable-systems-main
-    license_id: CC-BY-4.0
-    verify_license: true
-    parser: html
-    allowed_content_types: [html]
-    include_patterns: ["raw/ch*.html"]
-    exclude_patterns: ["raw/index*", "raw/*toc*", "tools/**", "LICENSE*"]
-    source_token_cap: 130000
-    source_priority: 1.2
-    notes: HTML chapter prose; scripts, navigation, redirectors, and generation tools excluded.
-
-  - id: cassandra_architecture_docs
-    name: Apache Cassandra architecture documentation
-    category: database_data_architecture
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/cassandra-trunk
-    license_id: Apache-2.0
-    verify_license: true
-    allowed_content_types: [markdown, asciidoc]
-    include_patterns: ["doc/**/architecture*.md", "doc/**/replication*.md", "doc/**/partition*.md", "doc/**/consisten*.md", "doc/**/storage*.md", "doc/**/failure*.md", "doc/**/*.adoc"]
-    exclude_patterns: ["**/README*", "**/cassandra.yaml", "src/**", "test/**", "build/**", "tools/**", "LICENSE*"]
-    source_token_cap: 120000
-    source_priority: 1.1
-    notes: Selected distributed database concepts only; no Java source, tests, tooling, or setup documents.
-
-  - id: adr_guidance
-    name: Architecture Decision Record guidance
-    category: adr_decision_reasoning
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/architecture-decision-record-main
-    license_id: CC-BY-NC-SA-4.0
-    verify_license: true
-    allowed_content_types: [markdown]
-    include_patterns: ["docs/**/*.md", "locales/en/**/*.md"]
-    exclude_patterns: ["**/*template*.md", "README*", "LICENSE*", "CHANGELOG*", ".github/**"]
-    source_token_cap: 90000
-    source_priority: 1.05
-    notes: Root license is CC-BY-NC-SA; held out because its non-commercial restriction is incompatible with this corpus.
-
-  - id: adr_records
-    name: ADR example collection
-    category: adr_decision_reasoning
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/architecture-decision-records-master
-    license_id: CC0-1.0
-    verify_license: true
-    allowed_content_types: [markdown]
-    include_patterns: ["docs/**/*.md"]
-    exclude_patterns: ["**/*template*.md", "README*", "LICENSE*", "CHANGELOG*", ".github/**", "scripts/**"]
-    source_token_cap: 80000
-    source_priority: 1.0
-    notes: Actual decision records only; templates and navigation are excluded.
-
-  - id: data_for_saas
-    name: Data for SaaS Patterns
-    category: database_data_architecture
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/data-for-saas-patterns-main
-    license_id: MIT
-    verify_license: true
-    allowed_content_types: [markdown]
-    include_patterns: ["reference-architectures/**/*.md"]
-    exclude_patterns: ["**/README*", "**/LICENSE*", "samples/**"]
-    source_token_cap: 80000
-    source_priority: 1.0
-    notes: Reference architecture prose, excluding runnable samples.
-
-  - id: agent_driven_architecture
-    name: Agent Driven Architecture
-    category: ai_agent_architecture
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/agent-driven-architecture-main
-    license_id: CC-BY-4.0
-    verify_license: true
-    allowed_content_types: [markdown]
-    include_patterns: ["docs/**/*.md", "wiki/**/*.md"]
-    exclude_patterns: ["README*", "LICENSE*", "CHANGELOG*", "examples/**", "dev/**", ".github/**"]
-    source_token_cap: 30000
-    source_priority: 1.0
-    notes: Small, controlled agent-architecture quota; examples and prompt-like material excluded.
-
-  - id: engineering_handbook
-    name: Engineering Handbook
-    category: software_architecture
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/engineering-handbook-main
-    license_id: CC-BY-SA-4.0
-    verify_license: true
-    allowed_content_types: [markdown]
-    include_patterns: ["content/**/*architecture*.md", "content/**/*design*.md", "content/**/*reliab*.md", "content/**/*system*.md"]
-    exclude_patterns: ["**/README*", "**/CONTRIBUTING*", "writing-guides/**", "scripts/**", ".github/**", "LICENSE*"]
-    source_token_cap: 90000
-    source_priority: 0.95
-    notes: Strict cap prevents handbook dominance; trade-off-heavy sections only.
-
-  - id: bigquery_aws_migration
-    name: BigQuery to AWS migration architecture
-    category: database_data_architecture
-    enabled: true
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/sample-bigquery-to-aws-migration-main
-    license_id: Apache-2.0
-    verify_license: true
-    allowed_content_types: [markdown]
-    include_patterns: ["docs/**/*.md"]
-    exclude_patterns: ["README*", "CONTRIBUTING*", "src/**", "tests/**", "skills/**", "LICENSE*"]
-    source_token_cap: 50000
-    source_priority: 1.0
-    notes: Migration design rationale only, never source code or tests.
-
-  - id: domain_driven_hexagon
-    name: Domain Driven Hexagon
-    category: domain_driven_design
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/domain-driven-hexagon-master
-    license_id: MIT
-    verify_license: true
-    notes: Repository currently has implementation but insufficient explanatory prose under the selected policies.
-
   - id: five_hundred_lines
-    name: 500 Lines or Less
+    name: "500 Lines or Less"
     category: system_design
-    enabled: false
+    enabled: true
     type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/500lines-master
-    license_id: null
-    notes: Root licensing is anthology/ambiguous; held pending per-chapter license review.
-
-  - id: distributed_systems_guide
-    name: Distributed Systems Guide
-    category: distributed_systems
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/Distributed-Systems-Guide-main
-    license_id: null
-    notes: No root license verification; held pending license evidence.
-
-  - id: distsysbook
-    name: Distributed Systems Book
-    category: distributed_systems
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/distsysbook-master
-    license_id: null
-    notes: No root license verification; held pending license evidence.
-
-  - id: llm_prompts
-    name: LLM Prompts
-    category: ai_agent_architecture
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/LLM-Prompts-main
-    license_id: null
-    notes: No root license and prompt-format content is intentionally excluded from DAPT.
-
-  - id: system_design_patterns
-    name: System Design Patterns
-    category: system_design
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/system-design-patterns-master
-    license_id: null
-    notes: No root license verification and likely link/reference-heavy material.
-
-  - id: universal_dev_standards
-    name: Universal Development Standards
-    category: software_architecture
-    enabled: false
-    type: local_directory
-    path: ${ARCHITECT_DATA_DIR}/universal-dev-standards-main
-    license_id: null
-    notes: Dual license needs explicit policy selection before training inclusion.
+    path: "${ARCHITECT_DATA_DIR}/500lines-master"
+    license_id: CC-BY-3.0
+    allow_unverified_license: true
+    license_training_status: mixed
+    release_eligible: true
+    license_review_status: approved_path_scoped
+    license_evidence_path: LICENSE.md
+    allowed_content_types: [markdown]
+    include_patterns: ["**/*.md", "**/*.markdown"]
+    exclude_patterns: ["LICENSE*", "README*", "BUILD*", "requirements*", "**/code/**", "**/images/**", "**/assets/**", "**/static/**", "**/node_modules/**"]
+    source_token_cap: 100000
+    source_priority: 1.0
+    notes: "Written chapter prose only; mixed prose/code licensing is path scoped."
+    license_policy:
+      mode: path_scoped
+      rules:
+        - {content: written_material, license_id: CC-BY-3.0, training_enabled: true, evidence_path: LICENSE.md, include_patterns: ["**/*.md", "**/*.markdown"], exclude_patterns: ["LICENSE*", "README*", "BUILD*", "**/code/**", "**/images/**", "**/assets/**"]}
+        - {content: software, license_id: MIT, training_enabled: false, evidence_path: LICENSE.md, include_patterns: ["**/*"]}
+  - {id: seven_edition, name: "Computer Networks 7E", category: networking_systems, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/7E-main", license_id: CC-BY-4.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [restructuredtext], include_patterns: ["*.rst"], exclude_patterns: ["README*", "LICENSE*", "CONTRIBUTING*", "index.rst", "authors.rst", "chapters.rst", "_*/**", ".github/**"], source_token_cap: 100000, source_priority: 1.0, notes: "Chapter prose; lower priority than newer edition."}
+  - {id: agent_driven_architecture, name: "Agent Driven Architecture", category: ai_agent_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/agent-driven-architecture-main", license_id: CC-BY-4.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["docs/**/*.md", "wiki/**/*.md"], exclude_patterns: ["README*", "LICENSE*", "CHANGELOG*", "examples/**", "dev/**", ".github/**", ".claude/**"], source_token_cap: 75000, source_priority: 1.0, notes: "Architecture prose only."}
+  - {id: adr_guidance, name: "ADR Guidance", category: adr_decision_reasoning, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/architecture-decision-record-main", license_id: CC-BY-NC-SA-4.0, allow_unverified_license: true, license_training_status: noncommercial, release_eligible: false, license_review_status: license_blocked, license_evidence_path: LICENSE.md, allowed_content_types: [markdown], include_patterns: ["README.md", "locales/en/**/*.md"], exclude_patterns: ["**/*template*.md", "LICENSE*", "CHANGELOG*", ".github/**"], source_token_cap: 80000, source_priority: 1.0, notes: "Experimental only; NC terms make it release-ineligible."}
+  - {id: adr_records, name: "ADR Example Collection", category: adr_decision_reasoning, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/architecture-decision-records-master", license_id: CC0-1.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["docs/**/*.md"], exclude_patterns: ["**/*template*.md", "README*", "LICENSE*", "CHANGELOG*", ".github/**", "scripts/**"], source_token_cap: 80000, source_priority: 1.0, notes: "Actual decision records only."}
+  - {id: book_edition, name: "Computer Networks newer edition", category: networking_systems, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/book-master", license_id: CC-BY-4.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [restructuredtext], include_patterns: ["*.rst"], exclude_patterns: ["README*", "LICENSE*", "CONTRIBUTING*", "CLA.rst", "index.rst", "_*/**", ".github/**", "**/*slide*"], source_token_cap: 100000, source_priority: 1.15, notes: "Preferred edition in 7E cross-source dedup."}
+  - {id: secure_reliable_systems, name: "Building Secure and Reliable Systems", category: reliability_resilience, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/building-secure-and-reliable-systems-main", license_id: CC-BY-4.0, verify_license: true, parser: html, allowed_content_types: [html], include_patterns: ["raw/ch*.html"], exclude_patterns: ["raw/index*", "raw/*toc*", "tools/**", "LICENSE*"], source_token_cap: 130000, source_priority: 1.2, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, notes: "HTML chapter prose only."}
+  - {id: cassandra_architecture_docs, name: "Apache Cassandra architecture docs", category: database_data_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/cassandra-trunk", license_id: Apache-2.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE.txt, allowed_content_types: [markdown, asciidoc], include_patterns: ["doc/**/architecture*.md", "doc/**/replication*.md", "doc/**/partition*.md", "doc/**/consisten*.md", "doc/**/storage*.md", "doc/**/failure*.md", "doc/**/*.adoc"], exclude_patterns: ["**/README*", "src/**", "test/**", "build/**", "tools/**", "LICENSE*"], source_token_cap: 120000, source_priority: 1.1, notes: "Architecture/distributed database docs only."}
+  - {id: data_for_saas, name: "Data for SaaS Patterns", category: database_data_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/data-for-saas-patterns-main", license_id: MIT-0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["reference-architectures/**/*.md"], exclude_patterns: ["**/README*", "**/LICENSE*", "samples/**"], source_token_cap: 80000, source_priority: 1.0, notes: "MIT No Attribution (MIT-0) architecture prose."}
+  - {id: distributed_systems_guide, name: "Distributed Systems Guide", category: distributed_systems, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/Distributed-Systems-Guide-main", license_id: null, allow_unverified_license: true, license_training_status: unverified, release_eligible: false, license_review_status: needs_manual_review, allowed_content_types: [markdown], include_patterns: ["README.md"], source_token_cap: 30000, source_priority: 0.7, notes: "Explanatory prose only; link/tool catalogs rejected."}
+  - {id: distsysbook, name: "Distributed Systems Book", category: distributed_systems, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/distsysbook-master", license_id: null, allow_unverified_license: true, license_training_status: custom_terms, release_eligible: false, license_review_status: license_blocked, allowed_content_types: [markdown], include_patterns: ["input/**/*.md"], exclude_patterns: ["input/0_index.md", "**/README*", "docs/**"], source_token_cap: 100000, source_priority: 1.0, notes: "Custom/restrictive author terms; no general training-compatible license verified."}
+  - {id: domain_driven_hexagon, name: "Domain Driven Hexagon", category: domain_driven_design, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/domain-driven-hexagon-master", license_id: MIT, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["README.md"], exclude_patterns: ["LICENSE*"], source_token_cap: 75000, source_priority: 1.05, strip_section_patterns: ["table of contents", "additional resources", "installation", "getting started", "running the project"], section_category_rules: {"bounded context": domain_driven_design, "domain-driven": domain_driven_design, "hexagonal": domain_driven_design, "architecture": software_architecture}, notes: "README conceptual prose; TOC/link/setup/code-heavy sections filtered."}
+  - {id: engineering_handbook, name: "Engineering Handbook", category: software_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/engineering-handbook-main", license_id: CC-BY-SA-4.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["content/**/*architecture*.md", "content/**/*design*.md", "content/**/*reliab*.md", "content/**/*system*.md", "content/**/*hld*.md"], exclude_patterns: ["**/README*", "**/CONTRIBUTING*", "writing-guides/**", "scripts/**", ".github/**", "LICENSE*"], source_token_cap: 90000, source_priority: 0.95, notes: "Strict cap; selected HLD, architecture, design, reliability prose."}
+  - {id: llm_prompts, name: "LLM Prompts", category: ai_agent_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/LLM-Prompts-main", license_id: null, allow_unverified_license: true, license_training_status: unverified, release_eligible: false, license_review_status: needs_manual_review, allowed_content_types: [markdown, asciidoc], include_patterns: ["src/docs/descriptions/**/*.adoc", "src/docs/descriptions/**/*.md"], exclude_patterns: ["README*", "CONTRIBUTING*", ".github/**", "prompts/**", "src/docs/Prompts/**", "src/docs/navigation.adoc", ".claude/**"], source_token_cap: 20000, source_priority: 0.5, notes: "Very low quota; descriptive architecture reasoning only, generic prompt templates excluded."}
+  - {id: bigquery_aws_migration, name: "BigQuery to AWS migration", category: database_data_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/sample-bigquery-to-aws-migration-main", license_id: Apache-2.0, verify_license: true, license_training_status: approved, release_eligible: true, license_review_status: approved, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["docs/**/*.md"], exclude_patterns: ["README*", "CONTRIBUTING*", "src/**", "tests/**", "skills/**", "LICENSE*", "docs/CLI_REFERENCE.md"], source_token_cap: 50000, source_priority: 1.0, notes: "Architecture, ADR and design documents only."}
+  - {id: system_design_patterns, name: "System Design Patterns", category: system_design, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/system-design-patterns-master", license_id: null, allow_unverified_license: true, license_training_status: unverified, release_eligible: false, license_review_status: needs_manual_review, allowed_content_types: [markdown], include_patterns: ["README.md"], source_token_cap: 20000, source_priority: 0.6, notes: "Explanatory material only; resource/link lists rejected."}
+  - {id: universal_dev_standards, name: "Universal Development Standards", category: software_architecture, enabled: true, type: local_directory, path: "${ARCHITECT_DATA_DIR}/universal-dev-standards-main", license_id: null, allow_unverified_license: true, license_training_status: mixed, release_eligible: false, license_review_status: needs_manual_review, license_evidence_path: LICENSE, allowed_content_types: [markdown], include_patterns: ["**/*design*.md", "**/*architecture*.md", "**/*reliab*.md", "**/*system*.md"], exclude_patterns: ["README*", "CONTRIBUTING*", "CHANGELOG*", ".github/**", ".claude/**", "node_modules/**"], source_token_cap: 75000, source_priority: 0.8, notes: "Useful design/reliability prose under mixed-license status."}

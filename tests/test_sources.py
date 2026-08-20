@@ -43,6 +43,7 @@ def test_detect_spdx_license() -> None:
     assert detect_spdx_license(apache_text) == "Apache-2.0"
     assert detect_spdx_license(cc_by_text) == "CC-BY-4.0"
     assert detect_spdx_license(cc_sa_text) == "CC-BY-SA-4.0"
+    assert detect_spdx_license("MIT No Attribution") == "MIT-0"
 
 
 def test_verify_repository_license_match(tmp_path: pytest.TempPathFactory) -> None:
@@ -145,3 +146,29 @@ def test_local_html_chapter_extraction_removes_navigation(tmp_path: pytest.TempP
     assert "Retries need timeout budgets." in document.text
     assert "Table of contents" not in document.text
     assert "ignored" not in document.text
+
+
+def test_path_scoped_license_keeps_written_material_only(tmp_path: pytest.TempPathFactory) -> None:
+    root = tmp_path / "mixed"  # type: ignore[operator]
+    (root / "chapter").mkdir(parents=True)
+    (root / "chapter" / "essay.markdown").write_text("# Architecture\n\nReasoning prose.", encoding="utf-8")
+    (root / "chapter" / "code").mkdir()
+    (root / "chapter" / "code" / "demo.md").write_text("# Code", encoding="utf-8")
+    config = SourceConfig(
+        id="mixed", name="Mixed", category="system_design", type="local_directory", path=str(root),
+        license_id="CC-BY-3.0", allow_unverified_license=True, license_training_status="mixed",
+        release_eligible=True, license_evidence_path="LICENSE.md",
+        include_patterns=["**/*.markdown", "**/*.md"],
+        license_policy={
+            "mode": "path_scoped",
+            "rules": [
+                {"license_id": "CC-BY-3.0", "training_enabled": True, "include_patterns": ["**/*.markdown"], "exclude_patterns": ["**/code/**"]},
+                {"license_id": "MIT", "training_enabled": False, "include_patterns": ["**/*"]},
+            ],
+        },
+    )
+    docs = LocalDirectorySourceAdapter(config).ingest()
+    assert len(docs) == 1
+    assert docs[0].license_id == "CC-BY-3.0"
+    assert docs[0].metadata["license_policy_type"] == "path_scoped"
+    assert docs[0].metadata["release_eligible"] is True

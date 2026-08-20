@@ -41,6 +41,14 @@ class SourceConfig:
     source_priority: float = 1.0
     notes: str | None = None
     verify_license: bool = False
+    allow_unverified_license: bool = False
+    license_training_status: str = "unverified"
+    release_eligible: bool = False
+    license_review_status: str = "needs_manual_review"
+    license_evidence_path: str | None = None
+    license_policy: dict[str, Any] = field(default_factory=dict)
+    strip_section_patterns: list[str] | None = None
+    section_category_rules: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -63,6 +71,9 @@ def detect_spdx_license(text: str) -> str | None:
 
     if "MIT OR CC0" in text_strip or "CC0 OR MIT" in text_strip:
         return "MIT"
+
+    if "mit no attribution" in text_lower or "mit-0" in text_lower:
+        return "MIT-0"
 
     # Check Apache before generic prose below: Apache 2.0's legal text can
     # mention third-party/Creative Commons material in a notice.
@@ -316,7 +327,7 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
         dir_path = _resolve_configured_path(self.config.path)
 
         verification = _verify_local_source_license(dir_path, self.config)
-        if verification is not None and not verification.is_valid:
+        if verification is not None and not verification.is_valid and not self.config.allow_unverified_license:
             logger.warning("[LICENSE REJECTED] Source '%s': %s", self.config.id, verification.error_message)
             return []
 
@@ -324,6 +335,9 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
         documents: list[CorpusDocument] = []
 
         for filepath in filepaths:
+            content_license = _resolve_content_license(filepath, dir_path, self.config)
+            if not content_license["training_enabled"]:
+                continue
             try:
                 content = _read_source_text(filepath, self.config.parser)
             except Exception:
@@ -337,8 +351,10 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
             doc_id = hashlib.sha256(doc_id_input.encode("utf-8")).hexdigest()[:16]
 
             title = _extract_markdown_title(content, filepath.stem)
-            verified_license_id = (
-                verification.verified_license_id if verification is not None else self.config.license_id
+            verified_license_id = content_license["license_id"] or (
+                verification.verified_license_id
+                if verification is not None and verification.is_valid
+                else self.config.license_id
             )
 
             doc = CorpusDocument(
@@ -357,6 +373,14 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
                     "source_path": str(filepath),
                     "license_source": verification.license_source if verification else "declared_manifest",
                     "verified_license_id": verified_license_id,
+                    "license_policy_type": content_license["policy_type"],
+                    "license_evidence_path": content_license["evidence_path"],
+                    "content_license_id": content_license["license_id"],
+                    "license_verified": bool(verification and verification.is_valid)
+                    or content_license["policy_type"] == "path_scoped",
+                    "license_training_status": self.config.license_training_status,
+                    "license_review_status": self.config.license_review_status,
+                    "release_eligible": self.config.release_eligible,
                     "verified_commit_sha": "local",
                     **self.config.metadata,
                 },
@@ -745,6 +769,39 @@ def _matches_allowed_content_type(path: Path, allowed: list[str] | None) -> bool
     return content_type in {item.lower() for item in allowed}
 
 
+def _resolve_content_license(
+    filepath: Path, base_dir: Path, config: SourceConfig
+) -> dict[str, Any]:
+    """Apply explicit content-class licensing rules; never infer a license."""
+    policy = config.license_policy
+    if policy.get("mode") != "path_scoped":
+        return {
+            "license_id": config.license_id,
+            "training_enabled": True,
+            "policy_type": "repository_wide",
+            "evidence_path": config.license_evidence_path,
+        }
+    for rule in policy.get("rules", []):
+        if matches_patterns(
+            filepath,
+            base_dir,
+            rule.get("include_patterns") or [],
+            rule.get("exclude_patterns") or [],
+        ):
+            return {
+                "license_id": rule.get("license_id"),
+                "training_enabled": bool(rule.get("training_enabled", True)),
+                "policy_type": "path_scoped",
+                "evidence_path": rule.get("evidence_path") or config.license_evidence_path,
+            }
+    return {
+        "license_id": None,
+        "training_enabled": False,
+        "policy_type": "path_scoped",
+        "evidence_path": config.license_evidence_path,
+    }
+
+
 def get_adapter(
     config: SourceConfig, cache_dir: str | Path | None = None
 ) -> BaseSourceAdapter:
@@ -800,6 +857,14 @@ def load_source_manifest(config_path: str | Path) -> list[SourceConfig]:
             source_priority=float(s_dict.get("source_priority", 1.0)),
             notes=s_dict.get("notes"),
             verify_license=bool(s_dict.get("verify_license", False)),
+            allow_unverified_license=bool(s_dict.get("allow_unverified_license", False)),
+            license_training_status=s_dict.get("license_training_status", "unverified"),
+            release_eligible=bool(s_dict.get("release_eligible", False)),
+            license_review_status=s_dict.get("license_review_status", "needs_manual_review"),
+            license_evidence_path=s_dict.get("license_evidence_path"),
+            license_policy=s_dict.get("license_policy", {}),
+            strip_section_patterns=s_dict.get("strip_section_patterns"),
+            section_category_rules=s_dict.get("section_category_rules", {}),
             metadata=s_dict.get("metadata", {}),
         )
         configs.append(config)
