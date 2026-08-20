@@ -219,6 +219,7 @@ the project shortcut:
 ```powershell
 $env:ARCHITECT_DATA_DIR = "D:\architect-data"
 architectai-pretraining corpus inventory --config configs/corpus_v2.yaml
+architectai-pretraining corpus capacity --config configs/corpus_v2.yaml
 architectai-pretraining corpus preview --config configs/corpus_v2.yaml --target-tokens 20000
 architectai-pretraining corpus audit --output-dir data/corpus_v2/preview
 ```
@@ -235,6 +236,15 @@ The v2 manifest records explicit per-source policies, licensing status,
 deduplication, source/category contribution, and a group-safe train/validation/
 held-out split. It never reads `data/benchmark/architectai_v1.jsonl` as corpus
 input and it never creates SFT/chat records.
+
+The default v2 configuration is an **experimental local corpus**: all 17 local
+sources are available for quality-gated curation, including mixed, restrictive,
+and unverified sources. Every record records its actual license evidence and a
+`release_eligible` flag. Preview writes both `experimental_manifest.json` and
+`release_eligible_manifest.json`; the latter shows what remains after removing
+release-ineligible records. `corpus capacity` reports whether a 1M freeze could
+meet source caps and category tolerance. A freeze aborts before writing output
+when those invariants cannot be met.
 
 ## 12. Stage 4.1 / Colab preparation
 
