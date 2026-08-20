@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from architectai_pretraining.corpus_v2 import CorpusV2Pipeline, load_corpus_v2_config
+from architectai_pretraining.corpus_v2 import (
+    CorpusV2Pipeline,
+    _normalize_structural_headings,
+    _sectionize,
+    load_corpus_v2_config,
+)
 from architectai_pretraining.models import CorpusDocument
 from architectai_pretraining.relevance import ArchitectureRelevanceScorer
 from architectai_pretraining.splitter import GroupCorpusSplitter
@@ -122,8 +127,42 @@ def test_group_split_keeps_section_siblings_together() -> None:
 
 def test_experimental_config_enables_all_sources() -> None:
     config = load_corpus_v2_config("configs/corpus_v2.yaml")
-    assert len(config.source_configs) == 17
+    assert len(config.source_configs) == 24
     assert all(source.enabled for source in config.source_configs)
+    configured = {source.id: source for source in config.source_configs}
+    assert configured["nats_docs"].path.endswith("nats.docs.v2-6a3e52c79b369b06890798a5fe2792eddd801852")  # type: ignore[union-attr]
+    assert configured["resilience4j_docs"].category == "reliability_resilience"
+    assert configured["madr"].category == "adr_decision_reasoning"
+    assert configured["opendatahub_adrs"].release_eligible is True
+    assert configured["context_mapping"].license_id == "CC-BY-SA-4.0"
+    assert configured["welcome_to_ddd"].include_patterns == ["README.md"]
+    for source_id in (
+        "nats_docs", "resilience4j_docs", "madr", "ad_guidance_tool",
+        "opendatahub_adrs", "context_mapping", "welcome_to_ddd",
+    ):
+        source = configured[source_id]
+        assert source.license_training_status == "approved"
+        assert source.license_evidence_path
+        assert source.license_policy == {"mode": "repository_wide"}
+        assert source.metadata["repository_snapshot"] in source.path  # type: ignore[operator]
+
+
+def test_rst_headings_are_normalized_and_sectionized() -> None:
+    doc = CorpusDocument(
+        id="rst", source_id="network", category="networking_systems", title="chapter",
+        text=(
+            "Network Architecture\n====================\n\n"
+            + "Architecture trade-offs affect latency and reliability. " * 20
+            + "\n\nFailure Handling\n----------------\n\n"
+            + "Retries and timeout decisions protect availability. " * 20
+        ),
+    )
+    normalized = _normalize_structural_headings(doc)
+    assert "# Network Architecture" in normalized.text
+    assert "# Failure Handling" in normalized.text
+    sections = _sectionize(normalized, MockTokenCounter(), max_tokens=60)
+    assert len(sections) > 1
+    assert {section.section_title for section in sections} >= {"Network Architecture", "Failure Handling"}
 
 
 def test_freeze_preflight_rejects_insufficient_capacity(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
