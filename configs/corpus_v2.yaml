@@ -343,3 +343,71 @@ sources:
     source_token_cap: 75000
     source_priority: 1.0
     notes: "Numbered ADRs and design/architecture prose only; templates, build material, and test code excluded."
+  - id: debezium_outbox_docs
+    name: "Debezium Outbox Documentation"
+    category_hint: messaging_event_driven
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/debezium-gapfill-v3"
+    url: "https://github.com/debezium/debezium"
+    license_id: CC-BY-3.0
+    allow_unverified_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved_path_scoped
+    license_evidence_path: "https://debezium.io/license/"
+    allowed_content_types: [asciidoc]
+    include_patterns:
+      - "documentation/modules/ROOT/pages/transformations/outbox-event-router.adoc"
+      - "documentation/modules/ROOT/pages/transformations/mongodb-outbox-event-router.adoc"
+    exclude_patterns: ["**/README*", "**/code/**", "**/test/**", "**/generated/**", "LICENSE*"]
+    source_token_cap: 18000
+    source_priority: 1.05
+    license_policy:
+      mode: path_scoped
+      rules:
+        - {content: documentation, license_id: CC-BY-3.0, training_enabled: true, evidence_path: "https://debezium.io/license/", include_patterns: ["documentation/modules/ROOT/pages/transformations/outbox-event-router.adoc", "documentation/modules/ROOT/pages/transformations/mongodb-outbox-event-router.adoc"]}
+    metadata: {repository_snapshot: "8aa8f6351911555b95f4e89697ef2c258b781b80", upstream_organization: "Debezium / Red Hat", source_purpose: "targeted outbox diversification"}
+    notes: "Two official outbox transformation design documents only; integration setup is excluded to avoid code-heavy CDC material."
+  - id: dotnet_ddd_domain_events_docs
+    name: ".NET DDD and Domain Events Architecture Guide"
+    category_hint: domain_driven_design
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/dotnet-docs-gapfill-v3"
+    url: "https://github.com/dotnet/docs"
+    license_id: CC-BY-4.0
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE
+    allowed_content_types: [markdown]
+    include_patterns: ["docs/architecture/microservices/microservice-ddd-cqrs-patterns/**/*.md"]
+    exclude_patterns: ["**/index.md", "**/media/**", "**/README*", "**/includes/**", "LICENSE*"]
+    source_token_cap: 25000
+    source_priority: 1.05
+    license_policy: {mode: repository_wide}
+    metadata: {repository_snapshot: "1fd0a4dfd14f5a09bfd071b433409c5998c5ee47", upstream_organization: "Microsoft .NET", source_purpose: "targeted bounded-context and domain-event diversification"}
+    notes: "Sparse checkout of one official DDD/CQRS architecture chapter; navigation, media, and generic documentation excluded."
+  - id: eventuate_tram_sagas_docs
+    name: "Eventuate Tram Sagas Guide"
+    category_hint: messaging_event_driven
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/eventuate-tram-sagas-gapfill-v3"
+    url: "https://github.com/eventuate-tram/eventuate-tram-sagas"
+    license_id: Apache-2.0
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE.md
+    allowed_content_types: [asciidoc]
+    include_patterns: ["README.adoc"]
+    exclude_patterns: ["**/src/**", "**/test/**", "**/images/**", "**/administration/**", "LICENSE*"]
+    source_token_cap: 24000
+    source_priority: 1.05
+    license_policy: {mode: repository_wide}
+    metadata: {repository_snapshot: "e8d57a1c62b052303ab1acee1ddcd4baebdb0562", upstream_organization: "Eventuate Tram", source_purpose: "targeted saga diversification"}
+    notes: "One Apache-2.0 prose-first guide covering saga orchestration, local transactions, and compensating actions; implementation modules and tests excluded."

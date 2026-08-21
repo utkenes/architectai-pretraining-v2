@@ -161,7 +161,7 @@ def test_group_split_keeps_section_siblings_together() -> None:
 
 def test_experimental_config_enables_all_sources() -> None:
     config = load_corpus_v2_config("configs/corpus_v2.yaml")
-    assert len(config.source_configs) == 30
+    assert len(config.source_configs) == 33
     assert all(source.enabled for source in config.source_configs)
     configured = {source.id: source for source in config.source_configs}
     assert configured["nats_docs"].path.endswith(
@@ -175,6 +175,16 @@ def test_experimental_config_enables_all_sources() -> None:
     assert configured["mit_6824_lecture_notes"].category_hint == "distributed_systems"
     assert configured["architecture_center"].category_hint == "software_architecture"
     assert configured["mozilla_application_services"].include_patterns[0].startswith("docs/adr/")
+    assert configured["debezium_outbox_docs"].category_hint == "messaging_event_driven"
+    assert configured["debezium_outbox_docs"].source_token_cap == 18000
+    assert configured["debezium_outbox_docs"].license_policy["mode"] == "path_scoped"
+    assert configured["dotnet_ddd_domain_events_docs"].license_id == "CC-BY-4.0"
+    assert configured["dotnet_ddd_domain_events_docs"].include_patterns == [
+        "docs/architecture/microservices/microservice-ddd-cqrs-patterns/**/*.md"
+    ]
+    assert configured["eventuate_tram_sagas_docs"].license_id == "Apache-2.0"
+    assert configured["eventuate_tram_sagas_docs"].include_patterns == ["README.adoc"]
+    assert configured["eventuate_tram_sagas_docs"].source_token_cap == 24000
     for source_id in (
         "nats_docs",
         "resilience4j_docs",

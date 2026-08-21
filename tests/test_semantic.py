@@ -69,10 +69,16 @@ def test_coverage_counts_diversity_and_concentration() -> None:
 def test_new_source_policies_are_selective_and_migration_friendly() -> None:
     config = load_corpus_v2_config("configs/corpus_v2.yaml")
     sources = {source.id: source for source in config.source_configs}
-    assert len(sources) == 30
+    assert len(sources) == 33
     assert sources["mit_6824_lecture_notes"].category_hint == "distributed_systems"
     assert sources["mit_6824_lecture_notes"].include_patterns == ["l*.md", "extra/pbft.md"]
     assert "**/ARCHITECTURE.md" in sources["mozilla_application_services"].include_patterns
     assert sources["architecture_center"].include_patterns != ["docs/**/*.md"]
     # Existing category entries remain valid aliases for migration.
     assert sources["nats_docs"].category_hint == "messaging_event_driven"
+    assert sources["debezium_outbox_docs"].include_patterns == [
+        "documentation/modules/ROOT/pages/transformations/outbox-event-router.adoc",
+        "documentation/modules/ROOT/pages/transformations/mongodb-outbox-event-router.adoc",
+    ]
+    assert sources["dotnet_ddd_domain_events_docs"].source_token_cap == 25000
+    assert sources["eventuate_tram_sagas_docs"].license_evidence_path == "LICENSE.md"
