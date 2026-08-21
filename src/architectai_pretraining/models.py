@@ -18,6 +18,17 @@ class CorpusDocument(BaseModel):
     source_url: str | None = Field(default=None, description="URL or location of the raw source")
     license_id: str | None = Field(default=None, description="Legal license identifier, if known")
     category: str = Field(description="Domain architectural category")
+    # ``category`` is retained for v1/v2 readers.  In schema v3 it always
+    # mirrors ``primary_category``; a source-level category is only a hint.
+    schema_version: int = 3
+    category_hint: str | None = None
+    primary_category: str | None = None
+    related_concepts: list[str] = Field(default_factory=list)
+    candidate_concepts: list[str] = Field(default_factory=list)
+    section_headings: list[str] = Field(default_factory=list)
+    extraction_policy: str | None = None
+    category_confidence: float | None = None
+    category_evidence: list[str] = Field(default_factory=list)
     title: str | None = Field(default=None, description="Document title if available")
     text: str = Field(description="Raw or cleaned document text content")
     language: str = Field(default="en", description="Document language code")

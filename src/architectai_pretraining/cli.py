@@ -113,12 +113,12 @@ def main() -> None:
 
     # Audit-first external architecture corpus workflow.  Freeze is explicit;
     # preview never promotes itself into a final training corpus.
-    corpus_parser = subparsers.add_parser("corpus", help="Architecture corpus v2 inventory, preview, audit, and freeze")
+    corpus_parser = subparsers.add_parser("corpus", help="Architecture corpus v3 semantic inventory, capacity, preview, audit, and freeze")
     corpus_actions = corpus_parser.add_subparsers(dest="corpus_action", required=True)
     for action, help_text in (
         ("inventory", "Inspect source policies and license status without reading corpus prose"),
         ("license-audit", "Write the experimental/release license review without curation"),
-        ("capacity", "Measure post-filter capacity and category coverage without freezing"),
+        ("capacity", "Measure post-filter category/concept coverage and source diversity without freezing"),
         ("preview", "Build an auditable 10k-20k-token preview; does not freeze data"),
         ("freeze", "Explicitly create a deterministic frozen DAPT corpus"),
     ):

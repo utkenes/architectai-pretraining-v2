@@ -27,6 +27,9 @@ class SourceConfig:
     id: str
     name: str
     category: str
+    # ``category`` is the legacy spelling and is interpreted as a weak hint
+    # when category_hint is absent.  It remains populated for old callers.
+    category_hint: str | None = None
     enabled: bool = True
     type: str = "local_directory"
     path: str | None = None
@@ -363,6 +366,7 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
                 source_url=self.config.url or f"file://{filepath.as_posix()}",
                 license_id=verified_license_id,
                 category=self.config.category,
+                category_hint=self.config.category_hint or self.config.category,
                 title=title,
                 text=content,
                 language=self.config.language,
@@ -370,6 +374,8 @@ class LocalDirectorySourceAdapter(BaseSourceAdapter):
                     "file_name": filepath.name,
                     "relative_path": rel_path,
                     "source_name": self.config.name,
+                    "category_hint": self.config.category_hint or self.config.category,
+                    "extraction_policy": "source_policy",
                     "source_path": str(filepath),
                     "license_source": verification.license_source if verification else "declared_manifest",
                     "verified_license_id": verified_license_id,
@@ -439,12 +445,15 @@ class LocalFileSourceAdapter(BaseSourceAdapter):
             source_url=self.config.url or f"file://{filepath.as_posix()}",
             license_id=self.config.license_id,
             category=self.config.category,
+            category_hint=self.config.category_hint or self.config.category,
             title=title,
             text=content,
             language=self.config.language,
             metadata={
                 "file_name": filepath.name,
                 "source_name": self.config.name,
+                "category_hint": self.config.category_hint or self.config.category,
+                "extraction_policy": "source_policy",
                 "license_source": "declared_manifest",
                 "verified_license_id": self.config.license_id,
                 "verified_commit_sha": "local",
@@ -592,6 +601,7 @@ class GitRepositorySourceAdapter(BaseSourceAdapter):
                 source_url=source_url,
                 license_id=verification.verified_license_id,
                 category=self.config.category,
+                category_hint=self.config.category_hint or self.config.category,
                 title=title,
                 text=content,
                 language=self.config.language,
@@ -603,6 +613,8 @@ class GitRepositorySourceAdapter(BaseSourceAdapter):
                     "verified_license_id": verification.verified_license_id,
                     "verified_commit_sha": commit_sha,
                     "source_name": self.config.name,
+                    "category_hint": self.config.category_hint or self.config.category,
+                    "extraction_policy": "source_policy",
                     **self.config.metadata,
                 },
             )
@@ -699,12 +711,15 @@ class HttpDocumentationSourceAdapter(BaseSourceAdapter):
             source_url=self.config.url,
             license_id=self.config.license_id,
             category=self.config.category,
+            category_hint=self.config.category_hint or self.config.category,
             title=self.config.name,
             text=extracted_text,
             language=self.config.language,
             metadata={
                 "canonical_url": self.config.url,
                 "source_name": self.config.name,
+                "category_hint": self.config.category_hint or self.config.category,
+                "extraction_policy": "source_policy",
                 "license_source": "declared_manifest",
                 "verified_license_id": self.config.license_id,
                 "verified_commit_sha": "http",
@@ -842,7 +857,8 @@ def load_source_manifest(config_path: str | Path) -> list[SourceConfig]:
         config = SourceConfig(
             id=s_dict["id"],
             name=s_dict.get("name", s_dict["id"]),
-            category=s_dict["category"],
+            category=s_dict.get("category_hint", s_dict.get("category", "software_architecture")),
+            category_hint=s_dict.get("category_hint", s_dict.get("category")),
             enabled=s_dict.get("enabled", True),
             type=s_dict.get("type", "local_directory"),
             path=s_dict.get("path"),
