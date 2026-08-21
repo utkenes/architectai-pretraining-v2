@@ -1,12 +1,13 @@
 # Read-only local experimental DAPT corpus. License uncertainty is preserved
 # as metadata and release_eligible controls later public/commercial filtering.
-corpus_version: architecture-corpus-v2-experimental
+corpus_version: architecture-corpus-v3-semantic-experimental
 target_tokens: 1000000
 token_tolerance: 0.05
 seed: 42
 max_section_tokens: 2400
 tokenizer: {identifier: Qwen/Qwen3-8B, revision: main}
 quality: {min_architecture_relevance_score: 0.40, max_link_ratio: 0.22, max_code_ratio: 0.55}
+coverage: {min_concept_tokens: 1000, min_concept_sources: 2, min_concept_documents: 2, max_dominant_source_share: 0.70}
 balancing:
   max_source_token_share: 0.15
   category_tolerance: 0.05
@@ -237,3 +238,108 @@ sources:
     section_category_rules: {"domain-driven design": domain_driven_design, "bounded context": domain_driven_design}
     metadata: {repository_snapshot: "welcome-to-ddd-4fd0ae233a5ee55c275638ab32aeb4f074db0b45"}
     notes: "Introductory DDD concepts only; translations and image/resource artifacts excluded."
+  - id: mit_6824_lecture_notes
+    name: "MIT 6.824 Lecture Notes"
+    category_hint: distributed_systems
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/6.824-lecture-notes-master"
+    license_id: null
+    allow_unverified_license: true
+    license_training_status: unverified
+    release_eligible: false
+    license_review_status: needs_manual_review
+    allowed_content_types: [markdown]
+    include_patterns: ["l*.md", "extra/pbft.md"]
+    exclude_patterns: ["exams/**", "papers/**", "code/**", "lab*/**", "**/*.html", "README*"]
+    source_token_cap: 100000
+    source_priority: 1.15
+    notes: "Lecture prose and PBFT notes only; code, labs, exams, PDFs, and HTML duplicates excluded."
+  - id: distsys_class
+    name: "Aphyr Distributed Systems Class"
+    category_hint: distributed_systems
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/distsys-class-master"
+    license_id: null
+    allow_unverified_license: true
+    license_training_status: unverified
+    release_eligible: false
+    license_review_status: needs_manual_review
+    allowed_content_types: [markdown]
+    include_patterns: ["README.markdown", "**/*.md"]
+    exclude_patterns: ["**/index.md", "**/resources/**", "**/*.html", "code/**"]
+    source_token_cap: 100000
+    source_priority: 1.1
+    notes: "Substantive distributed-systems prose only; link/reference material remains subject to quality gates."
+  - id: system_design_primer
+    name: "System Design Primer"
+    category_hint: system_design
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/system-design-primer-master"
+    license_id: CC-BY-4.0
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE.txt
+    allowed_content_types: [markdown]
+    include_patterns: ["README.md"]
+    exclude_patterns: ["README-*.md", "**/images/**", "**/solutions/**", "**/study-guides/**", "**/cheatsheets/**"]
+    strip_section_patterns: ["resources", "additional reading", "study guide", "contributing"]
+    source_token_cap: 120000
+    source_priority: 1.0
+    notes: "Substantive system-design explanations only; indexes, reference lists, and image assets are excluded."
+  - id: architecture_center
+    name: "Architecture Center"
+    category_hint: software_architecture
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/architecture-center-main"
+    license_id: null
+    allow_unverified_license: true
+    license_training_status: unverified
+    release_eligible: false
+    license_review_status: needs_manual_review
+    allowed_content_types: [markdown]
+    include_patterns: ["docs/**/*reliab*.md", "docs/**/*resilien*.md", "docs/**/*availab*.md", "docs/**/*scalab*.md", "docs/**/*perform*.md", "docs/**/*distribut*.md", "docs/**/*messag*.md", "docs/**/*data-architecture*.md", "docs/**/*security-architecture*.md", "docs/**/*integration*.md", "docs/**/*pattern*.md"]
+    exclude_patterns: ["**/README*", "**/index.md", "**/toc.md", "**/navigation/**", "**/generated/**"]
+    source_token_cap: 100000
+    source_priority: 0.9
+    notes: "Selective architecture subject areas only; broad documentation ingestion is intentionally prohibited."
+  - id: curated_ddd_resources
+    name: "Curated Resources for Domain-Driven Design"
+    category_hint: domain_driven_design
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/curated-resources-for-domain-driven-design-main"
+    license_id: null
+    allow_unverified_license: true
+    license_training_status: unverified
+    release_eligible: false
+    license_review_status: needs_manual_review
+    allowed_content_types: [markdown]
+    include_patterns: ["**/*.md"]
+    exclude_patterns: ["**/resources/**", "**/links/**", "LICENSE*", "CONTRIBUTING*"]
+    source_token_cap: 30000
+    source_priority: 0.6
+    notes: "Original DDD explanations may pass; link catalogs are rejected by normal quality gates."
+  - id: mozilla_application_services
+    name: "Mozilla Application Services"
+    category_hint: software_architecture
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/application-services-main"
+    license_id: MPL-2.0
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE
+    allowed_content_types: [markdown]
+    include_patterns: ["docs/adr/[0-9][0-9][0-9][0-9]*.md", "**/ARCHITECTURE.md", "docs/design/**/*.md"]
+    exclude_patterns: ["**/template.md", "**/README*", "scripts/**", "build/**", "test/**", "tests/**"]
+    source_token_cap: 75000
+    source_priority: 1.0
+    notes: "Numbered ADRs and design/architecture prose only; templates, build material, and test code excluded."
