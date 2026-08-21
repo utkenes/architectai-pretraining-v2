@@ -143,3 +143,76 @@ yet this is still a material P1 diversity risk under the configured 70%
 diagnostic gate. The next action is a narrowly researched, publisher-independent
 bounded-context source; do not generate a preview, freeze, or DAPT artifact
 until that decision is resolved.
+
+## Final bounded-context diversity closure
+
+This final collection pass is limited to `bounded-context`. The starting audit
+had 29,756 tokens, of which `curated_ddd_resources` supplied 23,474 (78.89%).
+To bring that fixed contributor to the configured 70% ceiling required at least
+`ceil(23,474 / 0.70 - 29,756) = 3,779` independent tokens. No preview, freeze,
+or DAPT operation was run.
+
+### Candidate evaluation
+
+| Candidate | Decision | Evidence-based reason |
+| --- | --- | --- |
+| DDD Crew Bounded Context Canvas | Rejected without download | CC-BY-4.0 but the same DDD Crew publisher as the existing `context_mapping` contributor. |
+| Contextive | Rejected without download | MIT and independent, but its narrow README-level material could not credibly supply the required 3,779 tokens of boundary reasoning. |
+| go-ecommerce | Rejected after focused diagnostic | Its MIT snapshot yielded 1,682 bounded-context tokens; even combined with Context Mapper this remained below the threshold, so it is not configured. |
+| Context Mapper documentation | Selected | Independent MIT-licensed snapshot with explicit bounded-context and architectural-refactoring material. |
+| ContextFlow | Selected | Independent MIT-licensed snapshot with a worked boundary case study and relationship analyses; the selected prose explains upstream/downstream, ACL, shared-kernel, and context-map trade-offs. |
+
+### Sources added and focused validation
+
+| Source | Snapshot | Scoped input | Eligible tokens | Bounded-context tokens |
+| --- | --- | --- | ---: | ---: |
+| Context Mapper Bounded Context Documentation | `b49c14b180e936e24c3de7edd9062c6d0ffc12fc` | 15 explicitly named DDD/refactoring Markdown documents; syntax/examples stripped | 972 | 972 |
+| ContextFlow Bounded Context Case Study | `998aff2e382030365f01be0437ab1ed438bd607a` | Elan case study, relationship-pattern matrix, and bounded-context comparison only | 5,554 | 3,587 |
+
+Both snapshots are MIT, license-verified from root `LICENSE`, approved, release
+eligible, and capped at 12,000 and 10,000 tokens respectively. The focused
+funnel retained 2 of 15 Context Mapper documents and 17 units from 3 ContextFlow
+documents; their aggregate independent bounded-context contribution is 4,559
+tokens, exceeding the 3,779-token requirement by 780 tokens. Rejected units are
+reported rather than force-retained: Context Mapper rejected 13 for relevance or
+link ratio, while ContextFlow rejected 24 on relevance/link-ratio or quality.
+
+Manual samples confirm substantive boundary reasoning rather than setup prose:
+the Elan case distinguishes strong, weak, and ACL-protected boundaries, relates
+Claims and Service Dispatch through a shared kernel, and discusses team topology.
+The relationship matrix distinguishes symmetric partnerships/shared kernels from
+upstream/downstream roles and treats ACL as an isolating translation boundary.
+
+### Final capacity audit
+
+Audit: `data/corpus_v3/capacity-final-bounded-context-v3/capacity.json`.
+
+| Measure | Before | After |
+| --- | ---: | ---: |
+| Configured sources | 35 | 37 |
+| Documents discovered | 1,396 | 1,414 |
+| Quality-passing units | 3,697 | 3,720 |
+| Units after grouping | 2,821 | 2,840 |
+| Units after deduplication | 2,810 | 2,829 |
+| Eligible tokens | 1,355,033 | 1,361,559 |
+| Tokens after source caps | 822,156 | 828,682 |
+| Exact / near duplicates removed | 3 / 8 | 3 / 8 |
+
+`bounded-context` rises from 29,756 to 34,315 tokens, from 5 to 7 sources, and
+from 27 to 31 documents. `curated_ddd_resources` remains the largest contributor
+at 23,474 tokens, but its share falls from 78.89% to **68.41%**; all configured
+bounded-context gates are now healthy. The new source matrix contribution is
+3,587 tokens from ContextFlow and 972 from Context Mapper.
+
+Other P1 results are unchanged: outbox remains healthy at 33,636 tokens and
+69.27% dominance; domain-event remains healthy at 29,565 and 62.82%; saga
+remains diagnostic-only at 32,885 and 71.80%. Its narrowly over-threshold status
+was previously accepted as not justifying a dedicated collection pass. No P2
+collection or automatic candidate promotion occurred.
+
+### Preview-readiness decision
+
+**READY_FOR_20K_PREVIEW.** The bounded-context diversity blocker is closed with
+publisher-independent, source-scoped, license-verified prose. The next step is
+a 20k preview and manual quality audit; do not freeze or start DAPT as part of
+that preview.
