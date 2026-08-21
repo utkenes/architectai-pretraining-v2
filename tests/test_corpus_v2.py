@@ -161,7 +161,7 @@ def test_group_split_keeps_section_siblings_together() -> None:
 
 def test_experimental_config_enables_all_sources() -> None:
     config = load_corpus_v2_config("configs/corpus_v2.yaml")
-    assert len(config.source_configs) == 35
+    assert len(config.source_configs) == 37
     assert all(source.enabled for source in config.source_configs)
     configured = {source.id: source for source in config.source_configs}
     assert configured["nats_docs"].path.endswith(
@@ -190,6 +190,16 @@ def test_experimental_config_enables_all_sources() -> None:
     assert configured["gruelbox_transaction_outbox_guide"].source_token_cap == 10000
     assert configured["tomorrow_one_transactional_outbox_guide"].license_id == "Apache-2.0"
     assert configured["tomorrow_one_transactional_outbox_guide"].source_token_cap == 8000
+    assert configured["contextmapper_bounded_context_docs"].license_id == "MIT"
+    assert len(configured["contextmapper_bounded_context_docs"].include_patterns) == 15
+    assert configured["contextmapper_bounded_context_docs"].source_token_cap == 12000
+    assert configured["contextflow_bounded_context_case_study"].include_patterns == [
+        "docs/elan-warranty-domain.md",
+        "docs/DDD_RELATIONSHIP_PATTERNS.md",
+        "docs/DDD_CREW_COMPARISON.md",
+    ]
+    assert configured["contextflow_bounded_context_case_study"].license_id == "MIT"
+    assert configured["contextflow_bounded_context_case_study"].source_token_cap == 10000
     for source_id in (
         "nats_docs",
         "resilience4j_docs",

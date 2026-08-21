@@ -455,3 +455,62 @@ sources:
     license_policy: {mode: repository_wide}
     metadata: {repository_snapshot: "95445248769cb78729697350fede46f9a17abab9", upstream_organization: "Tomorrow One", source_purpose: "final targeted outbox diversity"}
     notes: "One Apache-2.0 guide only; the 8k cap and section exclusions retain transactional guarantees and delivery trade-offs while excluding setup and library API material."
+  - id: contextmapper_bounded_context_docs
+    name: "Context Mapper Bounded Context Documentation"
+    category_hint: domain_driven_design
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/contextmapper-docs-gapfill-v3"
+    url: "https://github.com/ContextMapper/contextmapper.github.io"
+    license_id: MIT
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE
+    allowed_content_types: [markdown]
+    include_patterns:
+      - "_docs/language-reference/bounded-context.md"
+      - "_docs/language-reference/context-map.md"
+      - "_docs/language-reference/anticorruption-layer.md"
+      - "_docs/language-reference/customer-supplier.md"
+      - "_docs/language-reference/domain-vision-statement.md"
+      - "_docs/language-reference/partnership.md"
+      - "_docs/language-reference/published-language.md"
+      - "_docs/language-reference/shared-kernel.md"
+      - "_docs/language-reference/subdomain.md"
+      - "_docs/language-reference/conformist.md"
+      - "_docs/architectural-refactorings/architectural-refactorings.md"
+      - "_docs/architectural-refactorings/ar-extract-shared-kernel.md"
+      - "_docs/architectural-refactorings/ar-merge-bounded-contexts.md"
+      - "_docs/architectural-refactorings/ar-split-bounded-context-by-features.md"
+      - "_docs/architectural-refactorings/ar-split-bounded-context-by-owners.md"
+    exclude_patterns: ["**/README*", "**/examples/**", "**/tutorials/**", "**/generators/**", "**/ide-plugins-and-extensions/**", "**/images/**", "**/generated/**", "LICENSE*", "CHANGELOG*"]
+    strip_section_patterns: ["syntax", "input", "output", "example", "example sources", "semantic rules", "preconditions", "installation", "getting started", "next steps", "references"]
+    source_token_cap: 12000
+    source_priority: 1.05
+    license_policy: {mode: repository_wide}
+    metadata: {repository_snapshot: "b49c14b180e936e24c3de7edd9062c6d0ffc12fc", upstream_organization: "Context Mapper / contextmapper.org", source_purpose: "final bounded-context publisher diversity"}
+    notes: "Independent MIT-licensed DDD modeling documentation; only bounded-context, relationship, and architectural-refactoring reasoning is included, with DSL syntax and examples stripped."
+  - id: contextflow_bounded_context_case_study
+    name: "ContextFlow Bounded Context Case Study"
+    category_hint: domain_driven_design
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/contextflow-bounded-context-gapfill-v3"
+    url: "https://github.com/virtualgenius/contextflow"
+    license_id: MIT
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE
+    allowed_content_types: [markdown]
+    include_patterns: ["docs/elan-warranty-domain.md", "docs/DDD_RELATIONSHIP_PATTERNS.md", "docs/DDD_CREW_COMPARISON.md"]
+    exclude_patterns: ["**/README*", "**/src/**", "**/test/**", "**/examples/**", "**/mockups/**", "**/generated/**", "**/images/**", "docs/strategic/**", "docs/PLAN*", "docs/TODO*", "LICENSE*", "CHANGELOG*"]
+    strip_section_patterns: ["case study summary", "references"]
+    source_token_cap: 10000
+    source_priority: 1.05
+    license_policy: {mode: repository_wide}
+    metadata: {repository_snapshot: "998aff2e382030365f01be0437ab1ed438bd607a", upstream_organization: "ContextFlow / virtualgenius", source_purpose: "final bounded-context publisher diversity"}
+    notes: "One independent MIT-licensed worked bounded-context case study plus two bounded-context relationship analyses; application setup, mockups, source code, and feature specifications are excluded."
