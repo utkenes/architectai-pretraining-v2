@@ -263,6 +263,28 @@ Their include/exclude rules select explanatory architecture prose and retain
 the normal relevance, code-ratio, quality, exact-dedup, near-dedup, provenance,
 and group-safe split gates.
 
+### Corpus semantic linking v3
+
+V3 keeps `category` for old JSONL consumers, but every new training unit has
+`schema_version: 3`, a weak `category_hint`, exactly one content-derived
+`primary_category`, `related_concepts`, optional auditable `candidate_concepts`,
+ordered `section_headings`, and its extraction policy. The canonical concept
+vocabulary is deliberately small and deterministic: aliases such as `fault
+tolerance`, `fault_tolerance`, and `fault-tolerance` normalize to one label;
+unknown terms are reported, never promoted automatically.
+
+Section grouping is limited to adjacent, related sections from the same source
+document and respects the token budget. Cross-source linking is report metadata
+only: it never joins prose. `corpus capacity` now writes `concept_coverage.json`,
+`category_coverage.json`, `source_concept_matrix.json`, `candidate_concepts.json`,
+and `source_diagnostics.json` beside `capacity.json`. Coverage accounts for
+tokens, sources, documents, units, and dominant-source share, so a high-volume
+single source cannot masquerade as healthy diversity.
+
+Recommended workflow: source diagnostics → capacity/concept coverage → targeted
+gap analysis → diagnostic preview → manual review → final capacity → explicit
+freeze → DAPT. Do not promote candidate concepts or add sources without review.
+
 ## 12. Stage 4.1 / Colab preparation
 
 Production token counts use the pinned `Qwen/Qwen3-8B` tokenizer at revision `main`; approximate counters are test-only. Curate with the real tokenizer, then create and validate the transfer artifact before any model is loaded:
