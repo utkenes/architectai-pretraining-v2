@@ -69,7 +69,7 @@ def test_coverage_counts_diversity_and_concentration() -> None:
 def test_new_source_policies_are_selective_and_migration_friendly() -> None:
     config = load_corpus_v2_config("configs/corpus_v2.yaml")
     sources = {source.id: source for source in config.source_configs}
-    assert len(sources) == 33
+    assert len(sources) == 35
     assert sources["mit_6824_lecture_notes"].category_hint == "distributed_systems"
     assert sources["mit_6824_lecture_notes"].include_patterns == ["l*.md", "extra/pbft.md"]
     assert "**/ARCHITECTURE.md" in sources["mozilla_application_services"].include_patterns
@@ -82,3 +82,5 @@ def test_new_source_policies_are_selective_and_migration_friendly() -> None:
     ]
     assert sources["dotnet_ddd_domain_events_docs"].source_token_cap == 25000
     assert sources["eventuate_tram_sagas_docs"].license_evidence_path == "LICENSE.md"
+    assert "installation" in sources["gruelbox_transaction_outbox_guide"].strip_section_patterns
+    assert "usage" in sources["tomorrow_one_transactional_outbox_guide"].strip_section_patterns

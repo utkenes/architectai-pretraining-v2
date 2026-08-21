@@ -411,3 +411,47 @@ sources:
     license_policy: {mode: repository_wide}
     metadata: {repository_snapshot: "e8d57a1c62b052303ab1acee1ddcd4baebdb0562", upstream_organization: "Eventuate Tram", source_purpose: "targeted saga diversification"}
     notes: "One Apache-2.0 prose-first guide covering saga orchestration, local transactions, and compensating actions; implementation modules and tests excluded."
+  - id: gruelbox_transaction_outbox_guide
+    name: "Gruelbox Transaction Outbox Guide"
+    category_hint: messaging_event_driven
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/gruelbox-transaction-outbox-gapfill-v3"
+    url: "https://github.com/gruelbox/transaction-outbox"
+    license_id: Apache-2.0
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE
+    allowed_content_types: [markdown]
+    include_patterns: ["README.md"]
+    exclude_patterns: ["**/src/**", "**/test/**", "**/examples/**", "**/generated/**", "**/images/**", "LICENSE*", "CHANGELOG*"]
+    strip_section_patterns: ["contents", "installation", "requirements", "stable releases", "development snapshots", "basic configuration", "no existing transaction manager", "spring", "guice", "jooq", "oracle", "configuration reference", "stubbing in tests"]
+    source_token_cap: 10000
+    source_priority: 1.05
+    license_policy: {mode: repository_wide}
+    metadata: {repository_snapshot: "871430fbb35d930c3b1fcfe7e48e922c5004ff5d", upstream_organization: "Gruelbox", source_purpose: "final targeted outbox diversity"}
+    notes: "One Apache-2.0 architecture guide only; setup and API-reference sections are stripped so the 10k cap applies to explanatory outbox trade-off prose."
+  - id: tomorrow_one_transactional_outbox_guide
+    name: "Tomorrow One Transactional Outbox Guide"
+    category_hint: messaging_event_driven
+    enabled: true
+    type: local_directory
+    path: "${ARCHITECT_DATA_DIR}/tomorrow-one-transactional-outbox-gapfill-v3"
+    url: "https://github.com/tomorrow-one/transactional-outbox"
+    license_id: Apache-2.0
+    verify_license: true
+    license_training_status: approved
+    release_eligible: true
+    license_review_status: approved
+    license_evidence_path: LICENSE
+    allowed_content_types: [markdown]
+    include_patterns: ["README.md"]
+    exclude_patterns: ["**/src/**", "**/test/**", "**/examples/**", "**/generated/**", "**/images/**", "LICENSE*", "CHANGELOG*"]
+    strip_section_patterns: ["installation", "add library", "compatibility matrix", "prepare database", "setup the `outboxprocessor`", "kafka configuration", "transactional outbox configuration", "optional: automatic cleanup configuration", "usage", "tracing", "how-to re-publish", "how to house keep", "how-to release"]
+    source_token_cap: 8000
+    source_priority: 1.05
+    license_policy: {mode: repository_wide}
+    metadata: {repository_snapshot: "95445248769cb78729697350fede46f9a17abab9", upstream_organization: "Tomorrow One", source_purpose: "final targeted outbox diversity"}
+    notes: "One Apache-2.0 guide only; the 8k cap and section exclusions retain transactional guarantees and delivery trade-offs while excluding setup and library API material."

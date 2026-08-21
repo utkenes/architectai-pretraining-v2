@@ -161,7 +161,7 @@ def test_group_split_keeps_section_siblings_together() -> None:
 
 def test_experimental_config_enables_all_sources() -> None:
     config = load_corpus_v2_config("configs/corpus_v2.yaml")
-    assert len(config.source_configs) == 33
+    assert len(config.source_configs) == 35
     assert all(source.enabled for source in config.source_configs)
     configured = {source.id: source for source in config.source_configs}
     assert configured["nats_docs"].path.endswith(
@@ -185,6 +185,11 @@ def test_experimental_config_enables_all_sources() -> None:
     assert configured["eventuate_tram_sagas_docs"].license_id == "Apache-2.0"
     assert configured["eventuate_tram_sagas_docs"].include_patterns == ["README.adoc"]
     assert configured["eventuate_tram_sagas_docs"].source_token_cap == 24000
+    assert configured["gruelbox_transaction_outbox_guide"].license_id == "Apache-2.0"
+    assert configured["gruelbox_transaction_outbox_guide"].include_patterns == ["README.md"]
+    assert configured["gruelbox_transaction_outbox_guide"].source_token_cap == 10000
+    assert configured["tomorrow_one_transactional_outbox_guide"].license_id == "Apache-2.0"
+    assert configured["tomorrow_one_transactional_outbox_guide"].source_token_cap == 8000
     for source_id in (
         "nats_docs",
         "resilience4j_docs",
