@@ -32,6 +32,7 @@ data/cleaned/
 data/final/
 data/training/
 data/corpus_v2/
+data/corpus_v3/
 data/benchmark/results/
 outputs/
 checkpoints/
