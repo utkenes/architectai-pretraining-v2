@@ -33,6 +33,7 @@ data/final/
 data/training/
 data/corpus_v2/
 data/corpus_v3/
+data/corpus_audit/
 data/benchmark/results/
 outputs/
 checkpoints/
