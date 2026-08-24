@@ -211,7 +211,7 @@ def category_coverage_report(docs: Iterable[CorpusDocument]) -> dict[str, dict[s
 
 @dataclass(frozen=True)
 class Classification:
-    primary_category: str
+    primary_category: str | None
     confidence: float
     evidence: list[str]
 
@@ -231,11 +231,13 @@ def classify(primary_text: str, concepts: list[str], category_hint: str | None) 
             scores[category] += 1
             evidence[category].append(label)
     hint = _HINT_CATEGORY_MAP.get(category_hint or "", category_hint or "")
+    if not scores:
+        if hint in CANONICAL_CATEGORIES:
+            return Classification(hint, 0.1, ["fallback:category_hint", hint])
+        return Classification(None, 0.0, ["unresolved:no_semantic_signal_or_valid_hint"])
     if hint in CANONICAL_CATEGORIES:
         scores[hint] += 0.5
         evidence[hint].append("category_hint")
-    if not scores:
-        return Classification("software_architecture", 0.0, ["fallback: no semantic signal"])
     winner = sorted(scores, key=lambda category: (-scores[category], category))[0]
     total = sum(scores.values())
     return Classification(winner, round(scores[winner] / total, 3), sorted(set(evidence[winner])))
@@ -247,12 +249,16 @@ def annotate_document(doc: CorpusDocument) -> CorpusDocument:
     concepts, candidates = discover_concepts(searchable)
     hint = str(doc.metadata.get("section_category_hint") or doc.category_hint or doc.metadata.get("category_hint") or doc.category)
     result = classify(searchable, concepts, hint)
+    unresolved = result.primary_category is None
     return doc.model_copy(
         update={
             "schema_version": 3,
             "category_hint": hint,
             "primary_category": result.primary_category,
-            "category": result.primary_category,
+            # CorpusDocument keeps a non-empty legacy category field. An
+            # unresolved record never reaches selection; its legacy value is
+            # retained only so the rejection can be audited.
+            "category": result.primary_category or doc.category,
             "related_concepts": concepts,
             "candidate_concepts": candidates,
             "section_headings": headings,
@@ -260,7 +266,13 @@ def annotate_document(doc: CorpusDocument) -> CorpusDocument:
             or str(doc.metadata.get("extraction_policy", "default")),
             "category_confidence": result.confidence,
             "category_evidence": result.evidence,
-            "metadata": {**doc.metadata, "category_hint": hint, "semantic_schema_version": 3},
+            "metadata": {
+                **doc.metadata,
+                "category_hint": hint,
+                "semantic_schema_version": 3,
+                "classification_fallback": "fallback:category_hint" in result.evidence,
+                "classification_unresolved": unresolved,
+            },
         }
     )
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from architectai_pretraining.cleaner import BoilerplateCleaner, TextCleaner
 from architectai_pretraining.code_prose import CodeProseAnalyzer
 from architectai_pretraining.dedup import ExactDeduplicator
 from architectai_pretraining.io import write_dict_jsonl, write_jsonl
+from architectai_pretraining.manifest import compute_corpus_fingerprint
 from architectai_pretraining.models import CorpusDocument
 from architectai_pretraining.near_dedup import MinHashLSHDeduplicator
 from architectai_pretraining.relevance import ArchitectureRelevanceScorer, DomainRelevanceGate
@@ -392,6 +394,8 @@ class CorpusV2Pipeline:
 
         for doc in candidates:
             reasons: list[str] = []
+            if doc.primary_category is None:
+                reasons.append("unresolved_classification")
             if not domain.check(doc).is_relevant:
                 reasons.append("domain_relevance")
             if not relevance.score(doc).passed:
@@ -559,6 +563,20 @@ class CorpusV2Pipeline:
                 "retained_source_priority": "book_edition",
             },
             "category_coverage": _distribution(eligible)["categories"],
+            "classification": {
+                "fallback_units": sum(
+                    1 for doc in eligible if doc.metadata.get("classification_fallback")
+                ),
+                "fallback_tokens": sum(
+                    doc.token_count or 0
+                    for doc in eligible
+                    if doc.metadata.get("classification_fallback")
+                ),
+                "unresolved_units_rejected": sum(
+                    count.get("unresolved_classification", 0)
+                    for count in rejection_reasons.values()
+                ),
+            },
             **semantic,
         }
 
@@ -651,6 +669,8 @@ class CorpusV2Pipeline:
             quality_score = quality.score(doc)
             code_metrics = code.analyze(doc, self.counter)
             reasons: list[str] = []
+            if doc.primary_category is None:
+                reasons.append("unresolved classification")
             if not base.is_relevant:
                 reasons.append(base.reason or "domain relevance rejected")
             if not rel.passed:
@@ -811,15 +831,91 @@ class CorpusV2Pipeline:
         (out / "category_coverage.json").write_text(
             json.dumps(category_coverage_report(selected), indent=2), encoding="utf-8"
         )
+        source_diagnostics = {
+            source_id: {
+                "training_units": len(items),
+                "documents": len({item.relative_path or item.id for item in items}),
+                "tokens": sum(item.token_count or 0 for item in items),
+            }
+            for source_id, items in sorted(
+                (
+                    (source_id, [doc for doc in selected if doc.source_id == source_id])
+                    for source_id in sorted({doc.source_id for doc in selected})
+                ),
+            )
+        }
+        (out / "source_diagnostics.json").write_text(
+            json.dumps(source_diagnostics, indent=2), encoding="utf-8"
+        )
+        release_docs = [doc for doc in selected if bool(doc.metadata.get("release_eligible"))]
         manifest = self._manifest(target_tokens, selected, split, ledger, near_result, frozen)
-        manifest["freeze_preflight_passed"] = bool(freeze_preflight) if frozen else False
+        split_documents = {
+            "train": split.train_documents,
+            "validation": split.validation_documents,
+            "heldout": split.heldout_documents,
+        }
+        corpus_fingerprint = compute_corpus_fingerprint(selected, manifest["config_hash"])
+        try:
+            build_git_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+            ).stdout.strip() or "unknown"
+        except OSError:
+            build_git_sha = "unknown"
+        manifest.update(
+            {
+                "artifact_type": "freeze" if frozen else "preview",
+                "semantic_schema_version": 3,
+                "freeze_preflight_passed": bool(freeze_preflight) if frozen else False,
+                "actual_selected_token_count": sum(doc.token_count or 0 for doc in selected),
+                "build_git_sha": build_git_sha,
+                "deterministic_seed": self.config.seed,
+                "split_ratios": {
+                    "train": self.config.split_ratios[0],
+                    "validation": self.config.split_ratios[1],
+                    "heldout": self.config.split_ratios[2],
+                },
+                "corpus_fingerprint": corpus_fingerprint,
+                "split_fingerprints": {
+                    name: compute_corpus_fingerprint(docs, manifest["config_hash"])
+                    for name, docs in split_documents.items()
+                },
+                "selected_source_ids": sorted({doc.source_id for doc in selected}),
+                "concept_coverage_summary": {
+                    "canonical_concepts": len(semantic["concept_coverage"]),
+                    "warning_concepts": sorted(
+                        concept
+                        for concept, report in semantic["concept_coverage"].items()
+                        if report["status"] != "healthy"
+                    ),
+                },
+                "classification": {
+                    "fallback_units": sum(
+                        1 for doc in selected if doc.metadata.get("classification_fallback")
+                    ),
+                    "fallback_tokens": sum(
+                        doc.token_count or 0
+                        for doc in selected
+                        if doc.metadata.get("classification_fallback")
+                    ),
+                    "unresolved_units_rejected": sum(
+                        1
+                        for record in ledger
+                        if "unresolved classification" in str(record.get("reason", ""))
+                    ),
+                },
+                "release_eligibility": {
+                    "release_eligible_units": len(release_docs),
+                    "release_ineligible_units": len(selected) - len(release_docs),
+                    "release_eligible_tokens": sum(doc.token_count or 0 for doc in release_docs),
+                },
+            }
+        )
         (out / "corpus_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         experimental_manifest = {
             **manifest,
             "manifest_type": "experimental",
             "release_eligible": False,
         }
-        release_docs = [doc for doc in selected if bool(doc.metadata.get("release_eligible"))]
         release_manifest = {
             "manifest_type": "release_eligible",
             "corpus_version": self.config.corpus_version,
