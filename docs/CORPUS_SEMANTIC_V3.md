@@ -21,6 +21,12 @@ in their existing order, when the categories/concepts are continuous and the
 combined unit is within the token budget. Cross-source links exist only in the
 source-concept matrix, never as concatenated training prose.
 
+Balancing selects existing units without duplicating text. It applies category
+targets and source caps, then deterministically prefers units for scarce
+concepts from less dominant sources. Every retained preview/freeze unit carries
+its selection rationale in the audit ledger; concentration remains a coverage
+warning rather than an automatic rewrite of source prose.
+
 Run the audit workflow with the external corpus mounted read-only:
 
 ```powershell
