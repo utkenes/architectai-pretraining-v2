@@ -32,7 +32,10 @@ class CodeProseAnalyzer:
         prose_tokens = max(0, total_tokens - code_tokens)
 
         ratio = code_tokens / max(1, total_tokens)
-        is_dominated = ratio > self.max_code_token_ratio and total_tokens > 200
+        # A short explanatory snippet remains safe because its ratio is low;
+        # a standalone code/reference fragment is not rescued merely for being
+        # under an arbitrary document-size cutoff.
+        is_dominated = ratio > self.max_code_token_ratio and total_tokens > 40
 
         return CodeProseMetrics(
             total_tokens=total_tokens,

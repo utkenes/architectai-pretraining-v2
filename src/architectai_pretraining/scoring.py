@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from architectai_pretraining.models import CorpusDocument
+from architectai_pretraining.scoring_context import contextual_scoring_view
 
 TECH_VOCAB = {
     "architecture",
@@ -102,14 +103,15 @@ class DocumentQualityScorer:
         self.weights = weights or {
             "technical_vocab_density": 0.25,
             "tradeoff_keyword_density": 0.25,
-            "natural_prose_density": 0.20,
+            "natural_prose_density": 0.30,
             "heading_structure_density": 0.15,
-            "code_to_prose_balance": 0.15,
+            "code_to_prose_balance": 0.05,
         }
 
     def score(self, doc: CorpusDocument, token_count: int | None = None) -> DocumentQualityScore:
         text = doc.text
-        words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+        scoring_text = contextual_scoring_view(doc)
+        words = re.findall(r"\b[a-zA-Z]+\b", scoring_text.lower())
         word_count = len(words)
         if word_count == 0:
             return DocumentQualityScore(
@@ -134,7 +136,7 @@ class DocumentQualityScorer:
 
         # 4. Heading Structure Density
         # Markdown and AsciiDoc both carry meaningful document structure.
-        heading_count = len(re.findall(r"^(?:#{1,6}\s+|={1,6}\s+)", text, re.MULTILINE))
+        heading_count = len(re.findall(r"^(?:#{1,6}\s+|={1,6}\s+)", scoring_text, re.MULTILINE))
         heading_density = min(1.0, heading_count / 3.0)
 
         # 5. Code vs Prose Balance

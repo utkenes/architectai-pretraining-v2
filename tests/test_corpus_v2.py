@@ -92,7 +92,10 @@ def test_inventory_and_preview_preserve_external_provenance(
         json.loads(line)
         for line in (output / "audit.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert any(record["decision"] == "rejected" for record in records)
+    assert any(
+        record["decision"] in {"hard_rejected", "borderline_rejected"}
+        for record in records
+    )
     docs = []
     for split in ("train", "validation", "heldout"):
         docs.extend(
@@ -106,6 +109,10 @@ def test_inventory_and_preview_preserve_external_provenance(
     assert docs[0].token_count
     assert (output / "experimental_manifest.json").exists()
     assert (output / "release_eligible_manifest.json").exists()
+    capacity_output = tmp_path / "capacity"  # type: ignore[operator]
+    capacity = pipeline.write_capacity(capacity_output)
+    assert "score_distributions" in capacity
+    assert (capacity_output / "rejection_samples.jsonl").exists()
     repeat = pipeline.build(500, tmp_path / "preview_repeat", frozen=False)  # type: ignore[operator]
     assert repeat["corpus_hash"] == manifest["corpus_hash"]
 

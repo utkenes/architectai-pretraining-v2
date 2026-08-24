@@ -31,6 +31,7 @@ from architectai_pretraining.semantic import (
     category_coverage_report,
     coverage_report,
     group_adjacent_sections,
+    related_for_grouping,
 )
 from architectai_pretraining.sources import (
     SourceConfig,
@@ -68,6 +69,9 @@ class CorpusV2Config:
     min_relevance_score: float
     max_link_ratio: float
     max_code_ratio: float
+    borderline_relevance_score: float
+    borderline_quality_score: float
+    rejection_sample_size: int
     max_source_share: float
     category_tolerance: float
     concept_aware_selection: bool
@@ -109,6 +113,9 @@ def load_corpus_v2_config(path: str | Path) -> CorpusV2Config:
         min_relevance_score=float(quality.get("min_architecture_relevance_score", 0.40)),
         max_link_ratio=float(quality.get("max_link_ratio", 0.22)),
         max_code_ratio=float(quality.get("max_code_ratio", 0.55)),
+        borderline_relevance_score=float(quality.get("borderline_relevance_score", 0.28)),
+        borderline_quality_score=float(quality.get("borderline_quality_score", 0.33)),
+        rejection_sample_size=int(quality.get("rejection_sample_size", 24)),
         max_source_share=float(balancing.get("max_source_token_share", 0.15)),
         category_tolerance=float(balancing.get("category_tolerance", 0.05)),
         concept_aware_selection=bool(balancing.get("concept_aware_selection", True)),
@@ -272,6 +279,189 @@ def _assign_section_category(doc: CorpusDocument, rules: dict[str, str]) -> Corp
     return doc
 
 
+@dataclass
+class SectionAssessment:
+    """One deterministic section decision before optional same-document rescue."""
+
+    document: CorpusDocument
+    relevance_score: float
+    quality_score: float
+    code_ratio: float
+    link_ratio: float
+    decision: str
+    reason: str
+
+
+def _score_histogram(values: list[float], boundaries: tuple[float, float, float, float]) -> dict[str, int]:
+    """Stable score buckets for capacity diagnostics, without per-unit dumps."""
+    first, second, third, fourth = boundaries
+    labels = (
+        f"<{first:.2f}",
+        f"{first:.2f}-{second:.2f}",
+        f"{second:.2f}-{third:.2f}",
+        f"{third:.2f}-{fourth:.2f}",
+        f">={fourth:.2f}",
+    )
+    counts = dict.fromkeys(labels, 0)
+    for value in values:
+        label = (
+            labels[0]
+            if value < first
+            else labels[1]
+            if value < second
+            else labels[2]
+            if value < third
+            else labels[3]
+            if value < fourth
+            else labels[4]
+        )
+        counts[label] += 1
+    return counts
+
+
+def _rejection_samples(
+    assessments: list[SectionAssessment], sample_size: int, seed: int
+) -> list[dict[str, Any]]:
+    """Return a bounded, deterministic audit sample without changing corpus output."""
+    groups = {
+        "normal_pass": "strong_accepted",
+        "rescued_borderline": "rescued",
+        "borderline_rejected": "borderline_rejected",
+        "hard_rejected": "hard_rejected",
+    }
+    per_group = max(1, sample_size // len(groups))
+    samples: list[dict[str, Any]] = []
+    for decision, sample_class in groups.items():
+        matching = sorted(
+            (assessment for assessment in assessments if assessment.decision == decision),
+            key=lambda assessment: hashlib.sha256(
+                f"{seed}:{assessment.document.id}".encode()
+            ).hexdigest(),
+        )[:per_group]
+        for assessment in matching:
+            doc = assessment.document
+            samples.append(
+                {
+                    "sample_class": sample_class,
+                    "unit_id": doc.id,
+                    "source_id": doc.source_id,
+                    "relative_path": doc.relative_path,
+                    "document_title": doc.title,
+                    "section_title": doc.section_title,
+                    "token_count": doc.token_count,
+                    "relevance_score": assessment.relevance_score,
+                    "quality_score": assessment.quality_score,
+                    "code_ratio": assessment.code_ratio,
+                    "primary_category": doc.primary_category,
+                    "related_concepts": doc.related_concepts,
+                    "decision": assessment.decision,
+                    "reason": assessment.reason,
+                    "text": doc.text,
+                }
+            )
+    return samples
+
+
+def _section_index(doc: CorpusDocument) -> int:
+    return int(doc.metadata.get("section_index", 0))
+
+
+def _same_provenance(left: CorpusDocument, right: CorpusDocument) -> bool:
+    left_group = left.metadata.get("provenance_group_id")
+    right_group = right.metadata.get("provenance_group_id")
+    return (
+        left.source_id == right.source_id
+        and left.relative_path == right.relative_path
+        and (left_group is None or right_group is None or left_group == right_group)
+    )
+
+
+def _enrich_scored_section(
+    doc: CorpusDocument,
+    *,
+    relevance: ArchitectureRelevanceScorer,
+    quality: DocumentQualityScorer,
+    code: CodeProseAnalyzer,
+    domain: DomainRelevanceGate,
+    config: CorpusV2Config,
+    source: SourceConfig,
+    counter: TokenCounter,
+) -> SectionAssessment:
+    """Apply hard gates first, preserving a narrow auditable rescue pool."""
+    domain_result = domain.check(doc)
+    relevance_score = relevance.score(doc)
+    quality_result = quality.score(doc)
+    code_result = code.analyze(doc, counter)
+    enriched = doc.model_copy(
+        update={
+            "token_count": code_result.total_tokens,
+            "content_sha256": _content_hash(doc.text),
+            "quality_score": quality_result.quality_score,
+            "architecture_relevance_score": relevance_score.score,
+            "code_ratio": code_result.code_to_prose_ratio,
+            "corpus_version": config.corpus_version,
+            "source_priority": source.source_priority,
+            "source_name": doc.source_name or source.name,
+            "relative_path": doc.relative_path or str(doc.metadata.get("relative_path", "")),
+            "verified_license_id": doc.verified_license_id or doc.metadata.get("verified_license_id"),
+        }
+    )
+    hard_reasons: list[str] = []
+    if doc.primary_category is None:
+        hard_reasons.append("unresolved_classification")
+    if not domain_result.is_relevant:
+        hard_reasons.append(domain_result.reason or "domain_relevance")
+    if relevance_score.link_ratio > config.max_link_ratio:
+        hard_reasons.append("link_ratio_exceeds_configured_maximum")
+    if code_result.is_code_dominated:
+        hard_reasons.append("code_ratio_exceeds_configured_threshold")
+    if hard_reasons:
+        return SectionAssessment(
+            enriched,
+            relevance_score.score,
+            quality_result.quality_score,
+            code_result.code_to_prose_ratio,
+            relevance_score.link_ratio,
+            "hard_rejected",
+            "; ".join(hard_reasons),
+        )
+    if relevance_score.passed and quality_result.quality_score >= quality.min_document_score:
+        return SectionAssessment(
+            enriched,
+            relevance_score.score,
+            quality_result.quality_score,
+            code_result.code_to_prose_ratio,
+            relevance_score.link_ratio,
+            "normal_pass",
+            "; ".join(relevance_score.reasons) or "normal quality and relevance acceptance",
+        )
+    if (
+        source.license_training_status == "approved"
+        and relevance_score.score >= config.borderline_relevance_score
+        and quality_result.quality_score >= config.borderline_quality_score
+    ):
+        return SectionAssessment(
+            enriched,
+            relevance_score.score,
+            quality_result.quality_score,
+            code_result.code_to_prose_ratio,
+            relevance_score.link_ratio,
+            "borderline",
+            "eligible for same-document contextual rescue",
+        )
+    return SectionAssessment(
+        enriched,
+        relevance_score.score,
+        quality_result.quality_score,
+        code_result.code_to_prose_ratio,
+        relevance_score.link_ratio,
+        "borderline_rejected",
+        "below primary threshold and outside the conservative contextual rescue window",
+    )
+
+
+
+
 class CorpusV2Pipeline:
     """Deterministic audit, preview, and explicit freeze workflow."""
 
@@ -295,6 +485,106 @@ class CorpusV2Pipeline:
                 )
             )
         return self._counter
+
+    def _evaluate_candidates(
+        self, candidates: list[CorpusDocument], policies: dict[str, SourceConfig]
+    ) -> tuple[list[CorpusDocument], list[SectionAssessment]]:
+        """Keep primary gates strict, then attempt bounded same-document rescue."""
+        relevance = ArchitectureRelevanceScorer(
+            self.config.min_relevance_score, self.config.max_link_ratio
+        )
+        quality = DocumentQualityScorer(min_document_score=0.45)
+        code = CodeProseAnalyzer(self.config.max_code_ratio)
+        domain = DomainRelevanceGate()
+        assessments = [
+            _enrich_scored_section(
+                doc,
+                relevance=relevance,
+                quality=quality,
+                code=code,
+                domain=domain,
+                config=self.config,
+                source=policies[doc.source_id],
+                counter=self.counter,
+            )
+            for doc in candidates
+        ]
+        eligible = [
+            assessment
+            for assessment in assessments
+            if assessment.decision in {"normal_pass", "borderline"}
+        ]
+        ordered = sorted(
+            eligible,
+            key=lambda item: (
+                item.document.source_id,
+                item.document.relative_path or "",
+                _section_index(item.document),
+                item.document.id,
+            ),
+        )
+        consumed: set[str] = set()
+        rescued: list[CorpusDocument] = []
+        for assessment in ordered:
+            if assessment.decision != "borderline" or assessment.document.id in consumed:
+                continue
+            neighbours = [
+                candidate
+                for candidate in ordered
+                if candidate.document.id not in consumed
+                and candidate.document.id != assessment.document.id
+                and abs(_section_index(candidate.document) - _section_index(assessment.document)) == 1
+                and _same_provenance(assessment.document, candidate.document)
+                and related_for_grouping(assessment.document, candidate.document)
+            ]
+            neighbours.sort(key=lambda item: (_section_index(item.document), item.document.id))
+            for neighbour in neighbours:
+                pair = sorted(
+                    [assessment.document, neighbour.document], key=lambda doc: (_section_index(doc), doc.id)
+                )
+                combined = group_adjacent_sections(pair, self.counter, self.config.max_section_tokens)
+                if len(combined) != 1:
+                    continue
+                rescored = _enrich_scored_section(
+                    combined[0],
+                    relevance=relevance,
+                    quality=quality,
+                    code=code,
+                    domain=domain,
+                    config=self.config,
+                    source=policies[combined[0].source_id],
+                    counter=self.counter,
+                )
+                if rescored.decision != "normal_pass":
+                    continue
+                rescued.append(
+                    rescored.document.model_copy(
+                        update={
+                            "metadata": {
+                                **rescored.document.metadata,
+                                "recall_decision": "rescued_borderline",
+                                "rescue_reason": "same-document adjacent semantic context",
+                            }
+                        }
+                    )
+                )
+                assessment.decision = "rescued_borderline"
+                assessment.reason = "rescued with adjacent same-document semantic section"
+                if neighbour.decision == "borderline":
+                    neighbour.decision = "rescued_borderline"
+                    neighbour.reason = "rescued with adjacent same-document semantic section"
+                consumed.update({assessment.document.id, neighbour.document.id})
+                break
+            if assessment.document.id not in consumed:
+                assessment.decision = "borderline_rejected"
+                assessment.reason = "no compatible adjacent same-document semantic section passed rescue"
+        accepted = [
+            assessment.document
+            for assessment in assessments
+            if assessment.decision == "normal_pass" and assessment.document.id not in consumed
+        ]
+        accepted.extend(rescued)
+        return accepted, assessments
 
     def inventory(self) -> dict[str, Any]:
         sources: list[dict[str, Any]] = []
@@ -384,13 +674,7 @@ class CorpusV2Pipeline:
                 annotate_document(_assign_section_category(section, source.section_category_rules))
                 for section in _sectionize(cleaned, self.counter, self.config.max_section_tokens)
             )
-        relevance = ArchitectureRelevanceScorer(
-            self.config.min_relevance_score, self.config.max_link_ratio
-        )
-        quality = DocumentQualityScorer(min_document_score=0.45)
-        code = CodeProseAnalyzer(self.config.max_code_ratio)
-        domain = DomainRelevanceGate()
-        accepted: list[CorpusDocument] = []
+        accepted, assessments = self._evaluate_candidates(candidates, policies)
         rejected_by_source: Counter[str] = Counter()
         rejection_reasons: dict[str, Counter[str]] = defaultdict(Counter)
         accepted_documents: dict[str, set[str]] = defaultdict(set)
@@ -400,33 +684,17 @@ class CorpusV2Pipeline:
             """Stable source-document identity before sections are grouped."""
             return str(doc.metadata.get("provenance_group_id") or doc.relative_path or doc.id)
 
-        for doc in candidates:
-            reasons: list[str] = []
-            if doc.primary_category is None:
-                reasons.append("unresolved_classification")
-            if not domain.check(doc).is_relevant:
-                reasons.append("domain_relevance")
-            if not relevance.score(doc).passed:
-                reasons.append("architecture_relevance_or_link_ratio")
-            if quality.score(doc).quality_bucket == "low":
-                reasons.append("quality_score")
-            if code.analyze(doc, self.counter).is_code_dominated:
-                reasons.append("code_ratio")
-            if reasons:
-                rejected_by_source[doc.source_id] += 1
-                rejection_reasons[doc.source_id].update(reasons)
-                rejected_documents[doc.source_id].add(document_key(doc))
+        for assessment in assessments:
+            doc = assessment.document
+            if assessment.decision in {"normal_pass", "rescued_borderline"}:
+                accepted_documents[doc.source_id].add(document_key(doc))
                 continue
-            accepted_documents[doc.source_id].add(document_key(doc))
-            accepted.append(
-                doc.model_copy(
-                    update={
-                        "token_count": self.counter.count(doc.text),
-                        "content_sha256": _content_hash(doc.text),
-                    }
-                )
-            )
-        quality_passing_units = len(accepted)
+            rejected_by_source[doc.source_id] += 1
+            rejection_reasons[doc.source_id].update([assessment.reason])
+            rejected_documents[doc.source_id].add(document_key(doc))
+        quality_passing_units = sum(
+            assessment.decision == "normal_pass" for assessment in assessments
+        )
         grouped = group_adjacent_sections(accepted, self.counter, self.config.max_section_tokens)
         grouped = [
             doc.model_copy(
@@ -437,6 +705,16 @@ class CorpusV2Pipeline:
             )
             for doc in grouped
         ]
+        normal_tokens = sum(
+            doc.token_count or 0
+            for doc in accepted
+            if doc.metadata.get("recall_decision") != "rescued_borderline"
+        )
+        rescued_tokens = sum(
+            doc.token_count or 0
+            for doc in accepted
+            if doc.metadata.get("recall_decision") == "rescued_borderline"
+        )
         exact = ExactDeduplicator().deduplicate(grouped)
         quality_rank = {
             doc.id: float(doc.token_count or 0) / 1_000_000 for doc in exact.deduplicated_documents
@@ -514,12 +792,13 @@ class CorpusV2Pipeline:
         source_report = {
             source.id: {
                 "candidate_documents": sum(1 for doc in raw_docs if doc.source_id == source.id),
+                "source_documents_discovered": sum(1 for doc in raw_docs if doc.source_id == source.id),
+                "source_documents_with_any_accepted_unit": len(accepted_documents[source.id]),
+                "source_documents_with_any_rejected_unit": len(rejected_documents[source.id]),
                 "documents_discovered": sum(1 for doc in raw_docs if doc.source_id == source.id),
                 "documents_accepted": len(accepted_documents[source.id]),
                 "documents_rejected": len(rejected_documents[source.id] - accepted_documents[source.id]),
                 "documents_with_rejected_sections": len(rejected_documents[source.id]),
-                # Kept as a compatibility alias for v2 consumers. It now
-                # reports actual source documents, not section fragments.
                 "documents_with_quality_passing_units": len(accepted_documents[source.id]),
                 "eligible_documents": source_docs[source.id],
                 "quality_passing_units_before_grouping": sum(
@@ -527,7 +806,17 @@ class CorpusV2Pipeline:
                 ),
                 "training_units": source_docs[source.id],
                 "rejected_documents": rejected_by_source[source.id],
+                "legacy_rejected_documents_note": "Deprecated: this is a section/unit count, not a document count.",
                 "quality_rejected_units": rejected_by_source[source.id],
+                "sections_normal_pass": sum(
+                    assessment.decision == "normal_pass" and assessment.document.source_id == source.id
+                    for assessment in assessments
+                ),
+                "sections_rescued": sum(
+                    assessment.decision == "rescued_borderline" and assessment.document.source_id == source.id
+                    for assessment in assessments
+                ),
+                "sections_rejected": rejected_by_source[source.id],
                 "major_rejection_reasons": dict(rejection_reasons[source.id].most_common()),
                 "eligible_tokens": source_tokens[source.id],
                 "tokens": source_tokens[source.id],
@@ -544,6 +833,25 @@ class CorpusV2Pipeline:
             "funnel": {
                 "documents_discovered": len(raw_docs),
                 "sections_generated": len(candidates),
+                "sections_normal_pass": sum(assessment.decision == "normal_pass" for assessment in assessments),
+                "sections_borderline": sum(
+                    assessment.decision in {"rescued_borderline", "borderline_rejected"}
+                    for assessment in assessments
+                ),
+                "sections_rescued": sum(
+                    assessment.decision == "rescued_borderline" for assessment in assessments
+                ),
+                "sections_rejected": sum(
+                    assessment.decision in {"hard_rejected", "borderline_rejected"}
+                    for assessment in assessments
+                ),
+                "tokens_normal_pass": normal_tokens,
+                "tokens_rescued": rescued_tokens,
+                "tokens_rejected": sum(
+                    assessment.document.token_count or 0
+                    for assessment in assessments
+                    if assessment.decision in {"hard_rejected", "borderline_rejected"}
+                ),
                 "quality_passing_units_before_grouping": quality_passing_units,
                 "units_after_same_document_grouping": len(grouped),
                 "units_after_dedup": len(eligible),
@@ -585,6 +893,29 @@ class CorpusV2Pipeline:
                     for count in rejection_reasons.values()
                 ),
             },
+            "score_distributions": {
+                "relevance": _score_histogram(
+                    [assessment.relevance_score for assessment in assessments],
+                    (0.20, 0.28, 0.40, 0.60),
+                ),
+                "quality": _score_histogram(
+                    [assessment.quality_score for assessment in assessments],
+                    (0.25, 0.33, 0.45, 0.70),
+                ),
+                "joint_borderline": {
+                    "both_in_rescue_window": sum(
+                        assessment.relevance_score >= self.config.borderline_relevance_score
+                        and assessment.quality_score >= self.config.borderline_quality_score
+                        for assessment in assessments
+                    ),
+                    "rescued": sum(
+                        assessment.decision == "rescued_borderline" for assessment in assessments
+                    ),
+                },
+            },
+            "rejection_samples": _rejection_samples(
+                assessments, self.config.rejection_sample_size, self.config.seed
+            ),
             **semantic,
         }
 
@@ -605,6 +936,7 @@ class CorpusV2Pipeline:
         (out / "source_diagnostics.json").write_text(
             json.dumps(result["source_capacity"], indent=2), encoding="utf-8"
         )
+        write_dict_jsonl(result["rejection_samples"], out / "rejection_samples.jsonl")
         return result
 
     def _assert_freeze_preflight(self, target_tokens: int) -> dict[str, Any]:
@@ -663,67 +995,34 @@ class CorpusV2Pipeline:
                 for section in _sectionize(cleaned, self.counter, self.config.max_section_tokens)
             )
 
-        relevance = ArchitectureRelevanceScorer(
-            self.config.min_relevance_score, self.config.max_link_ratio
-        )
-        domain_gate = DomainRelevanceGate()
-        quality = DocumentQualityScorer(min_document_score=0.45)
-        code = CodeProseAnalyzer(self.config.max_code_ratio)
-        accepted: list[CorpusDocument] = []
+        accepted, assessments = self._evaluate_candidates(candidates, policies)
         score_map: dict[str, float] = {}
-        for doc in candidates:
-            base = domain_gate.check(doc)
-            rel = relevance.score(doc)
-            quality_score = quality.score(doc)
-            code_metrics = code.analyze(doc, self.counter)
-            reasons: list[str] = []
-            if doc.primary_category is None:
-                reasons.append("unresolved classification")
-            if not base.is_relevant:
-                reasons.append(base.reason or "domain relevance rejected")
-            if not rel.passed:
-                reasons.append("; ".join(rel.reasons) or "architecture relevance below threshold")
-            if quality_score.quality_bucket == "low":
-                reasons.append("quality score below threshold")
-            if code_metrics.is_code_dominated:
-                reasons.append("code ratio exceeds configured threshold")
-            enriched = doc.model_copy(
-                update={
-                    "token_count": self.counter.count(doc.text),
-                    "content_sha256": _content_hash(doc.text),
-                    "quality_score": quality_score.quality_score,
-                    "architecture_relevance_score": rel.score,
-                    "code_ratio": code_metrics.code_to_prose_ratio,
-                    "corpus_version": self.config.corpus_version,
-                    "source_priority": policies[doc.source_id].source_priority,
-                    "source_name": doc.source_name or policies[doc.source_id].name,
-                    "relative_path": doc.relative_path
-                    or str(doc.metadata.get("relative_path", "")),
-                    "verified_license_id": doc.verified_license_id
-                    or doc.metadata.get("verified_license_id"),
-                }
-            )
+        for assessment in assessments:
+            enriched = assessment.document
             record = {
                 "document_id": enriched.id,
                 "source_id": enriched.source_id,
                 "category": enriched.category,
                 "relative_path": enriched.relative_path,
                 "token_count": enriched.token_count,
-                "quality_score": enriched.quality_score,
-                "architecture_relevance_score": rel.score,
+                "quality_score": assessment.quality_score,
+                "architecture_relevance_score": assessment.relevance_score,
                 "code_ratio": enriched.code_ratio,
-                "link_ratio": rel.link_ratio,
+                "link_ratio": assessment.link_ratio,
             }
-            if reasons:
-                ledger.append({**record, "decision": "rejected", "reason": "; ".join(reasons)})
-            else:
-                accepted.append(enriched)
+            if assessment.decision in {"normal_pass", "rescued_borderline"}:
                 score_map[enriched.id] = (
-                    quality_score.quality_score
-                    + rel.score
+                    assessment.quality_score
+                    + assessment.relevance_score
                     + policies[enriched.source_id].source_priority / 100
                 )
-                ledger.append({**record, "decision": "accepted", "reason": "; ".join(rel.reasons)})
+            ledger.append(
+                {
+                    **record,
+                    "decision": assessment.decision,
+                    "reason": assessment.reason,
+                }
+            )
 
         # Same-document grouping happens only after individual sections passed
         # quality gates.  It never crosses a document/source boundary.

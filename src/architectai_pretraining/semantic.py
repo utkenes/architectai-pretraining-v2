@@ -283,13 +283,32 @@ def annotate_semantics(doc: CorpusDocument) -> CorpusDocument:
 
 
 def related_for_grouping(left: CorpusDocument, right: CorpusDocument) -> bool:
-    if left.source_id != right.source_id or left.relative_path != right.relative_path:
+    left_group = left.metadata.get("provenance_group_id")
+    right_group = right.metadata.get("provenance_group_id")
+    if (
+        left.source_id != right.source_id
+        or left.relative_path != right.relative_path
+        or (left_group is not None and right_group is not None and left_group != right_group)
+    ):
         return False
     if set(left.related_concepts) & set(right.related_concepts):
         return True
-    return left.primary_category == right.primary_category and bool(
-        left.related_concepts or right.related_concepts
-    )
+    if left.primary_category != right.primary_category:
+        return False
+    ignored = {"and", "the", "with", "that", "this", "from", "into", "uses", "use"}
+    left_terms = {
+        term
+        for term in re.findall(r"[a-z][a-z-]{3,}", left.text.casefold())
+        if term not in ignored
+    }
+    right_terms = {
+        term
+        for term in re.findall(r"[a-z][a-z-]{3,}", right.text.casefold())
+        if term not in ignored
+    }
+    # This is deliberately a weak same-document fallback, not arbitrary
+    # same-category grouping: adjacent prose must share a meaningful term.
+    return bool(left_terms & right_terms)
 
 
 def semantically_related(left: CorpusDocument, right: CorpusDocument) -> bool:
@@ -330,6 +349,8 @@ def group_adjacent_sections(
             and counter.count(joined) <= max_tokens
         ):
             headings = [*current.section_headings, *doc.section_headings]
+            current_ids = list(current.metadata.get("grouped_section_ids", [current.id]))
+            next_ids = list(doc.metadata.get("grouped_section_ids", [doc.id]))
             current = annotate_document(
                 current.model_copy(
                     update={
@@ -339,7 +360,7 @@ def group_adjacent_sections(
                         "metadata": {
                             **current.metadata,
                             "last_section_index": doc.metadata.get("section_index", 0),
-                            "grouped_section_ids": [current.id, doc.id],
+                            "grouped_section_ids": [*current_ids, *next_ids],
                         },
                     }
                 )

@@ -6,7 +6,14 @@ token_tolerance: 0.05
 seed: 42
 max_section_tokens: 2400
 tokenizer: {identifier: Qwen/Qwen3-8B, revision: main}
-quality: {min_architecture_relevance_score: 0.40, max_link_ratio: 0.22, max_code_ratio: 0.55}
+quality:
+  min_architecture_relevance_score: 0.40
+  max_link_ratio: 0.22
+  max_code_ratio: 0.55
+  # Conservative, named window for same-document contextual rescue only.
+  borderline_relevance_score: 0.28
+  borderline_quality_score: 0.33
+  rejection_sample_size: 24
 coverage: {min_concept_tokens: 1000, min_concept_sources: 2, min_concept_documents: 2, max_dominant_source_share: 0.70}
 balancing:
   max_source_token_share: 0.15

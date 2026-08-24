@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from architectai_pretraining.models import CorpusDocument
+from architectai_pretraining.scoring_context import contextual_scoring_view
 
 
 @dataclass
@@ -50,8 +51,8 @@ class DomainRelevanceGate:
     """Deterministic domain relevance filter for software architecture corpus."""
 
     def check(self, doc: CorpusDocument) -> RelevanceCheckResult:
-        doc_id = doc.id.lower()
-        title_lower = (doc.title or "").lower()
+        doc_id = (doc.relative_path or doc.id).lower()
+        title_lower = " ".join([doc.title or "", doc.section_title or "", *doc.section_headings]).lower()
         text = doc.text
 
         # 1. Path & Filename pattern check
@@ -113,9 +114,11 @@ class ArchitectureRelevanceScorer:
         self.max_link_ratio = max_link_ratio
 
     def score(self, doc: CorpusDocument) -> ArchitectureRelevanceScore:
-        text = doc.text.lower()
+        scoring_text = contextual_scoring_view(doc)
+        text = scoring_text.lower()
         words = re.findall(r"\b[a-z][a-z-]*\b", text)
-        lines = [line.strip() for line in doc.text.splitlines() if line.strip()]
+        lines = [line.strip() for line in scoring_text.splitlines() if line.strip()]
+        content_lines = [line.strip() for line in doc.text.splitlines() if line.strip()]
         word_count = max(1, len(words))
         signal_hits = sum(text.count(signal) for signal in self.SIGNALS)
         signal_score = min(1.0, signal_hits / max(2.0, word_count / 85.0))
@@ -125,16 +128,19 @@ class ArchitectureRelevanceScorer:
         structure_score = min(1.0, heading_count / 3.0)
         adr_labels = sum(
             1 for label in ("context", "decision", "consequences", "alternatives", "status", "rationale")
-            if re.search(rf"(?im)^#{1,6}\s+{label}\b|^{label}\s*$", doc.text)
+            if re.search(rf"(?im)^#{1,6}\s+{label}\b|^{label}\s*$", scoring_text)
         )
         adr_score = min(1.0, adr_labels / 3.0)
         links = len(re.findall(r"https?://|\[[^\]]+\]\([^)]*\)", doc.text))
-        link_ratio = links / max(1, len(lines))
-        code_lines = sum(1 for line in lines if line.startswith(("```", "    ", "\t")))
-        code_penalty = min(1.0, code_lines / max(1, len(lines)))
-        link_penalty = min(1.0, link_ratio / max(self.max_link_ratio, 0.001))
-        score = 0.38 * signal_score + 0.25 * prose_density + 0.18 * structure_score + 0.19 * adr_score
-        score -= 0.25 * link_penalty + 0.20 * code_penalty
+        link_ratio = links / max(1, len(content_lines))
+        code_lines = sum(1 for line in content_lines if line.startswith(("```", "    ", "\t")))
+        code_penalty = min(1.0, code_lines / max(1, len(content_lines)))
+        # A configured hard ratio already blocks link dumps. Below that limit,
+        # documentation references are only a small soft signal.
+        link_penalty = max(0.0, (link_ratio / max(self.max_link_ratio, 0.001) - 0.5) * 2)
+        score = 0.42 * signal_score + 0.28 * prose_density + 0.18 * structure_score + 0.12 * adr_score
+        # CodeProseAnalyzer remains the authoritative code-dominance gate.
+        score -= 0.06 * link_penalty + 0.05 * code_penalty
         score = round(max(0.0, min(1.0, score)), 4)
         reasons: list[str] = []
         if signal_hits:
