@@ -44,6 +44,9 @@ NON_RELEVANT_TITLE_PATTERNS = [
     r"^governance",
     r"^bug report",
     r"^feature request",
+    r"^contributors?$",
+    r"^social links?$",
+    r"^community$",
 ]
 
 
@@ -135,8 +138,9 @@ class ArchitectureRelevanceScorer:
         link_ratio = links / max(1, len(content_lines))
         code_lines = sum(1 for line in content_lines if line.startswith(("```", "    ", "\t")))
         code_penalty = min(1.0, code_lines / max(1, len(content_lines)))
-        # A configured hard ratio already blocks link dumps. Below that limit,
-        # documentation references are only a small soft signal.
+        # DomainRelevanceGate owns real navigation/link-dump rejection. Link
+        # ratio remains an auditable soft signal for otherwise substantive
+        # documentation, including sections above the historical ratio cap.
         link_penalty = max(0.0, (link_ratio / max(self.max_link_ratio, 0.001) - 0.5) * 2)
         score = 0.42 * signal_score + 0.28 * prose_density + 0.18 * structure_score + 0.12 * adr_score
         # CodeProseAnalyzer remains the authoritative code-dominance gate.
@@ -153,7 +157,7 @@ class ArchitectureRelevanceScorer:
             reasons.append("code-heavy material")
         return ArchitectureRelevanceScore(
             score=score,
-            passed=score >= self.min_score and link_ratio <= self.max_link_ratio,
+            passed=score >= self.min_score,
             reasons=reasons,
             link_ratio=round(link_ratio, 4),
             prose_density=round(prose_density, 4),

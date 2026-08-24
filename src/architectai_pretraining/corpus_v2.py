@@ -320,16 +320,18 @@ def _score_histogram(values: list[float], boundaries: tuple[float, float, float,
 
 
 def _rejection_samples(
-    assessments: list[SectionAssessment], sample_size: int, seed: int
+    assessments: list[SectionAssessment],
+    rescued_units: list[CorpusDocument],
+    sample_size: int,
+    seed: int,
 ) -> list[dict[str, Any]]:
     """Return a bounded, deterministic audit sample without changing corpus output."""
     groups = {
         "normal_pass": "strong_accepted",
-        "rescued_borderline": "rescued",
         "borderline_rejected": "borderline_rejected",
         "hard_rejected": "hard_rejected",
     }
-    per_group = max(1, sample_size // len(groups))
+    per_group = max(1, sample_size // (len(groups) + 1))
     samples: list[dict[str, Any]] = []
     for decision, sample_class in groups.items():
         matching = sorted(
@@ -356,9 +358,34 @@ def _rejection_samples(
                     "related_concepts": doc.related_concepts,
                     "decision": assessment.decision,
                     "reason": assessment.reason,
+                    "metadata": doc.metadata,
                     "text": doc.text,
                 }
             )
+    for doc in sorted(
+        rescued_units,
+        key=lambda item: hashlib.sha256(f"{seed}:{item.id}".encode()).hexdigest(),
+    )[:per_group]:
+        samples.append(
+            {
+                "sample_class": "rescued",
+                "unit_id": doc.id,
+                "source_id": doc.source_id,
+                "relative_path": doc.relative_path,
+                "document_title": doc.title,
+                "section_title": doc.section_title,
+                "token_count": doc.token_count,
+                "relevance_score": doc.architecture_relevance_score,
+                "quality_score": doc.quality_score,
+                "code_ratio": doc.code_ratio,
+                "primary_category": doc.primary_category,
+                "related_concepts": doc.related_concepts,
+                "decision": "rescued_borderline",
+                "reason": str(doc.metadata.get("rescue_reason", "same-document contextual rescue")),
+                "metadata": doc.metadata,
+                "text": doc.text,
+            }
+        )
     return samples
 
 
@@ -411,8 +438,6 @@ def _enrich_scored_section(
         hard_reasons.append("unresolved_classification")
     if not domain_result.is_relevant:
         hard_reasons.append(domain_result.reason or "domain_relevance")
-    if relevance_score.link_ratio > config.max_link_ratio:
-        hard_reasons.append("link_ratio_exceeds_configured_maximum")
     if code_result.is_code_dominated:
         hard_reasons.append("code_ratio_exceeds_configured_threshold")
     if hard_reasons:
@@ -914,7 +939,14 @@ class CorpusV2Pipeline:
                 },
             },
             "rejection_samples": _rejection_samples(
-                assessments, self.config.rejection_sample_size, self.config.seed
+                assessments,
+                [
+                    doc
+                    for doc in eligible
+                    if doc.metadata.get("recall_decision") == "rescued_borderline"
+                ],
+                self.config.rejection_sample_size,
+                self.config.seed,
             ),
             **semantic,
         }

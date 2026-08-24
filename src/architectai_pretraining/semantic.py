@@ -351,6 +351,12 @@ def group_adjacent_sections(
             headings = [*current.section_headings, *doc.section_headings]
             current_ids = list(current.metadata.get("grouped_section_ids", [current.id]))
             next_ids = list(doc.metadata.get("grouped_section_ids", [doc.id]))
+            rescue_metadata = {
+                key: value
+                for key in ("recall_decision", "rescue_reason")
+                for value in (current.metadata.get(key), doc.metadata.get(key))
+                if value is not None
+            }
             current = annotate_document(
                 current.model_copy(
                     update={
@@ -359,6 +365,7 @@ def group_adjacent_sections(
                         "section_headings": headings,
                         "metadata": {
                             **current.metadata,
+                            **rescue_metadata,
                             "last_section_index": doc.metadata.get("section_index", 0),
                             "grouped_section_ids": [*current_ids, *next_ids],
                         },

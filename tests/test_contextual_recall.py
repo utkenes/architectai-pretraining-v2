@@ -193,3 +193,77 @@ def test_rescue_never_bypasses_hard_code_or_domain_gates(
 
     assert [doc.id for doc in accepted] == ["neighbor"]
     assert {item.decision for item in assessments if item.document.id != "neighbor"} == {"hard_rejected"}
+
+
+def test_rescued_audit_sample_uses_final_retained_combined_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "corpus.yaml"
+    _write_config(config)
+    pipeline = corpus_v2.CorpusV2Pipeline(config, token_counter=MockTokenCounter())
+    monkeypatch.setattr(corpus_v2, "ArchitectureRelevanceScorer", _FakeRelevance)
+    monkeypatch.setattr(corpus_v2, "DocumentQualityScorer", _FakeQuality)
+    borderline = _doc("borderline", "borderline Raft replication needs quorum recovery.", path="one.md")
+    neighbor = _doc("neighbor", "neighbor Raft replication explains quorum recovery.", path="one.md", index=1)
+    accepted, assessments = pipeline._evaluate_candidates(
+        [borderline, neighbor], {"trusted": pipeline.config.source_configs[0]}
+    )
+
+    retained = accepted[0]
+    sample = next(
+        item
+        for item in corpus_v2._rejection_samples(assessments, accepted, sample_size=4, seed=7)
+        if item["sample_class"] == "rescued"
+    )
+    assert sample["text"] == retained.text
+    assert sample["text"] != borderline.text
+    assert sample["token_count"] == retained.token_count
+    assert sample["relevance_score"] == retained.architecture_relevance_score
+    assert sample["quality_score"] == retained.quality_score
+    assert sample["metadata"]["grouped_section_ids"] == ["borderline", "neighbor"]
+
+
+def test_substantive_linked_prose_passes_while_navigation_and_social_sections_fail(tmp_path: Path) -> None:
+    config = tmp_path / "corpus.yaml"
+    _write_config(config)
+    pipeline = corpus_v2.CorpusV2Pipeline(config, token_counter=MockTokenCounter())
+    ddd = _doc(
+        "ddd",
+        "\n".join(
+            [
+                "Domain driven design defines bounded contexts, aggregates, and domain events. "
+                "The architecture separates transaction responsibilities, consistency boundaries, "
+                "and integration decisions with explicit coupling trade-offs."
+            ]
+            * 5
+            + ["[reference](https://example.test/ddd)"] * 5
+        ),
+    )
+    persistence = _doc(
+        "persistence",
+        "\n".join(
+            [
+                "Persistence architecture chooses replication, partitioning, transactions, and storage consistency. "
+                "The design explains failover, recovery, latency, and availability trade-offs."
+            ]
+            * 6
+            + ["[documentation](https://example.test/persistence)"] * 4
+        ),
+    )
+    navigation = _doc(
+        "navigation",
+        "\n".join(f"- [resource {index}](https://example.test/{index})" for index in range(20)),
+    )
+    contributors = _doc(
+        "contributors",
+        "\n".join(f"- [social {index}](https://example.test/{index})" for index in range(12)),
+        title="Contributors",
+    )
+    accepted, assessments = pipeline._evaluate_candidates(
+        [ddd, persistence, navigation, contributors], {"trusted": pipeline.config.source_configs[0]}
+    )
+
+    assert {doc.id for doc in accepted} == {"ddd", "persistence"}
+    rejected = {item.document.id: item.decision for item in assessments}
+    assert rejected["navigation"] == "hard_rejected"
+    assert rejected["contributors"] == "hard_rejected"
