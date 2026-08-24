@@ -239,6 +239,7 @@ def main() -> None:
     dapt_readiness = dapt_actions.add_parser("readiness", help="Generate Stage 4.1 GO/NO-GO report")
     dapt_readiness.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
     dapt_readiness.add_argument("--output-dir", default="data/training")
+    dapt_readiness.add_argument("--max-contamination-rate", type=float, default=0.0)
     dapt_final_readiness = dapt_actions.add_parser("final-readiness", help="Generate Stage 4.2 final report")
     dapt_final_readiness.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
     dapt_final_readiness.add_argument("--output-dir", default="data/training")
@@ -326,7 +327,9 @@ def main() -> None:
         elif args.dapt_action == "readiness":
             from architectai_pretraining.training.readiness import generate_readiness_report
 
-            result = generate_readiness_report(args.corpus_dir, args.output_dir)
+            result = generate_readiness_report(
+                args.corpus_dir, args.output_dir, max_contamination_rate=args.max_contamination_rate
+            )
             for key in ("READY_FOR_COLAB_BASELINE", "READY_FOR_STAGE_5A_SMOKE", "GO_FOR_FULL_DAPT"):
                 print(f"{key}={str(result[key]).lower()}")
             if result["blocking_issues"]:
