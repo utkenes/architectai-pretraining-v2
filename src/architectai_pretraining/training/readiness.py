@@ -13,6 +13,7 @@ from architectai_pretraining.semantic import CANONICAL_CATEGORIES
 from architectai_pretraining.training.corpus_contract import (
     load_semantic_freeze,
     split_integrity_report,
+    validate_packed_artifacts,
 )
 
 
@@ -46,9 +47,14 @@ def generate_readiness_report(
         if benchmark_exists
         else None
     )
-    packed_dir = artifact.directory / "packed"
-    packed = {name: (packed_dir / f"{name}_manifest.json").is_file() for name in ("train", "validation")}
     blockers: list[str] = []
+    try:
+        packed_manifests = validate_packed_artifacts(artifact)
+        packed = dict.fromkeys(packed_manifests, True)
+    except (FileNotFoundError, ValueError) as error:
+        packed_manifests = {}
+        packed = dict.fromkeys(("train", "validation"), False)
+        blockers.append(f"Packed data integrity gate failed: {error}")
     if not split_integrity["valid"]:
         blockers.append("Train/validation/heldout split isolation failed.")
     if invalid:
@@ -66,6 +72,14 @@ def generate_readiness_report(
         "contaminated_scenarios": contamination.contaminated_scenarios if contamination else 0,
         "contamination_rate": contamination.contamination_rate if contamination else None,
         "flagged_items_count": len(contamination.flagged_items) if contamination else 0,
+        "flagged_items": contamination.flagged_items if contamination else [],
+        "detection_policy": {
+            "exact_benchmark_text": True,
+            "ngram_jaccard_threshold": 0.50,
+            "benchmark_containment_threshold": 0.80,
+            "minimum_benchmark_ngrams": 5,
+            "minimum_matching_ngrams": 4,
+        },
         "threshold": max_contamination_rate,
         "passed": bool(contamination and contamination.contamination_rate <= max_contamination_rate),
     }
@@ -79,10 +93,14 @@ def generate_readiness_report(
         "licensing": manifest["release_eligibility"],
         "split_integrity": split_integrity,
         "benchmark_contamination": contamination_payload,
-        "packing_statistics": {"packed_train_manifest_exists": packed["train"], "packed_validation_manifest_exists": packed["validation"]},
+        "packing_statistics": {
+            "packed_train_valid": packed["train"],
+            "packed_validation_valid": packed["validation"],
+            "sequence_length": packed_manifests.get("train", {}).get("statistics", {}).get("sequence_length"),
+        },
         "known_warnings": warnings,
         "blocking_issues": blockers,
-        "READY_FOR_COLAB_BASELINE": benchmark_exists,
+        "READY_FOR_COLAB_BASELINE": not blockers,
         "READY_FOR_STAGE_5A_SMOKE": not blockers and all(packed.values()),
         "GO_FOR_FULL_DAPT": False,
     }

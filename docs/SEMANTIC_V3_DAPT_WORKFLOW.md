@@ -23,8 +23,16 @@ architectai-pretraining dapt package-data --corpus-dir data/corpus_v3/freeze
 architectai-pretraining dapt final-readiness --corpus-dir data/corpus_v3/freeze
 ```
 
-`readiness` validates manifest identity, tokenizer identity, ID/text/provenance
-split isolation, license metadata, and the benchmark n-gram contamination gate.
-Any blocker prevents the CLI smoke path from loading a model. A passing
-readiness report is necessary but not sufficient for full DAPT; the Stage 5A
-smoke and behavior gate remain explicit later decisions.
+`readiness` recomputes the corpus and all three split content fingerprints,
+checks hashes for each required audit artifact, validates tokenizer identity and
+ID/text/provenance split isolation, and proves that packed train/validation
+bytes and manifests bind to this exact freeze. Reusing a pack from another
+freeze, changing packed JSONL, or changing an audit file is a blocker.
+
+The contamination gate records exact benchmark reuse, n-gram Jaccard overlap,
+and benchmark-side containment evidence (including matched n-gram counts). High
+containment requires enough benchmark and matching n-grams, so a short generic
+phrase cannot trigger the containment rule by itself. Any blocker prevents the
+CLI smoke path from loading a model. A passing readiness report is necessary
+but not sufficient for full DAPT; the Stage 5A smoke and behavior gate remain
+explicit later decisions.

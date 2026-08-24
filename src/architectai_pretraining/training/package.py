@@ -12,6 +12,7 @@ from architectai_pretraining.training.corpus_contract import (
     SemanticFreezeArtifact,
     load_semantic_freeze,
     sha256_file,
+    validate_packed_artifacts,
 )
 
 
@@ -53,11 +54,7 @@ def create_dataset_package(
             + ", ".join(missing_packed)
         )
     file_hashes.update({f"packed/{name}": sha256_file(training / name) for name in present_training})
-    packed_manifests = {
-        name: json.loads((training / f"{name}_manifest.json").read_text(encoding="utf-8"))
-        for name in ("train", "validation")
-        if (training / f"{name}_manifest.json").is_file()
-    }
+    packed_manifests = validate_packed_artifacts(artifact, training)
     package_manifest: dict[str, Any] = {
         "dataset_version": dataset_version,
         "created_at": datetime.now(UTC).isoformat(),

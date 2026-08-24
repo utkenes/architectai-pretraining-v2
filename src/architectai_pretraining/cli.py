@@ -322,7 +322,13 @@ def main() -> None:
             for split in ("train", "validation"):
                 packed = pack_documents(read_jsonl(artifact.directory / f"{split}.jsonl"), tokenizer, args.sequence_length)
                 packed.write_jsonl(output / f"{split}.jsonl")
-                packed.write_manifest(output / f"{split}_manifest.json")
+                packed.write_manifest(
+                    output / f"{split}_manifest.json",
+                    source_corpus_fingerprint=artifact.corpus_fingerprint,
+                    source_split_fingerprint=artifact.manifest["split_fingerprints"][split],
+                    tokenizer_identifier=tokenizer.identifier,
+                    tokenizer_revision=tokenizer.revision,
+                )
                 print(f"{split}: {packed.statistics.sequence_count} sequences; fingerprint={packed.fingerprint}")
         elif args.dapt_action == "readiness":
             from architectai_pretraining.training.readiness import generate_readiness_report

@@ -47,6 +47,9 @@ class SourceConfig:
     allow_unverified_license: bool = False
     license_training_status: str = "unverified"
     release_eligible: bool = False
+    # Commercial reuse is a distinct legal conclusion; release eligibility is
+    # an artifact-distribution decision and must never stand in for it.
+    commercial_reuse_permitted: bool | None = None
     license_review_status: str = "needs_manual_review"
     license_evidence_path: str | None = None
     license_policy: dict[str, Any] = field(default_factory=dict)
@@ -876,6 +879,7 @@ def load_source_manifest(config_path: str | Path) -> list[SourceConfig]:
             allow_unverified_license=bool(s_dict.get("allow_unverified_license", False)),
             license_training_status=s_dict.get("license_training_status", "unverified"),
             release_eligible=bool(s_dict.get("release_eligible", False)),
+            commercial_reuse_permitted=s_dict.get("commercial_reuse_permitted"),
             license_review_status=s_dict.get("license_review_status", "needs_manual_review"),
             license_evidence_path=s_dict.get("license_evidence_path"),
             license_policy=s_dict.get("license_policy", {}),

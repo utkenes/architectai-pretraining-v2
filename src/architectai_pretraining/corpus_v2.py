@@ -47,6 +47,14 @@ from architectai_pretraining.tokenizer import (
 )
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class CorpusV2Config:
     config_path: Path
@@ -318,7 +326,7 @@ class CorpusV2Pipeline:
                     "license_training_status": source.license_training_status,
                     "license_review_status": source.license_review_status,
                     "release_eligible": source.release_eligible,
-                    "commercial_reuse_permitted": source.release_eligible,
+                    "commercial_reuse_permitted": source.commercial_reuse_permitted,
                     "license_concerns": _license_concerns(source.license_training_status),
                     "useful_prose_paths": source.include_patterns or [],
                     "rejected_paths": source.exclude_patterns or [],
@@ -847,6 +855,10 @@ class CorpusV2Pipeline:
         (out / "source_diagnostics.json").write_text(
             json.dumps(source_diagnostics, indent=2), encoding="utf-8"
         )
+        license_report = self.license_audit()
+        (out / "license_audit.json").write_text(
+            json.dumps(license_report, indent=2), encoding="utf-8"
+        )
         release_docs = [doc for doc in selected if bool(doc.metadata.get("release_eligible"))]
         manifest = self._manifest(target_tokens, selected, split, ledger, near_result, frozen)
         split_documents = {
@@ -908,6 +920,16 @@ class CorpusV2Pipeline:
                     "release_ineligible_units": len(selected) - len(release_docs),
                     "release_eligible_tokens": sum(doc.token_count or 0 for doc in release_docs),
                 },
+                "artifact_hashes": {
+                    name: _sha256_file(out / name)
+                    for name in (
+                        "audit.jsonl",
+                        "concept_coverage.json",
+                        "category_coverage.json",
+                        "source_diagnostics.json",
+                        "license_audit.json",
+                    )
+                },
             }
         )
         (out / "corpus_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -930,10 +952,6 @@ class CorpusV2Pipeline:
         )
         (out / "release_eligible_manifest.json").write_text(
             json.dumps(release_manifest, indent=2), encoding="utf-8"
-        )
-        license_report = self.license_audit()
-        (out / "license_audit.json").write_text(
-            json.dumps(license_report, indent=2), encoding="utf-8"
         )
         return manifest
 

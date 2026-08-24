@@ -42,14 +42,45 @@ class PackedDataset:
             for sequence in self.sequences:
                 handle.write(json.dumps(sequence, separators=(",", ":")) + "\n")
 
-    def write_manifest(self, path: str | Path) -> None:
+    def write_manifest(
+        self,
+        path: str | Path,
+        *,
+        source_corpus_fingerprint: str | None = None,
+        source_split_fingerprint: str | None = None,
+        tokenizer_identifier: str | None = None,
+        tokenizer_revision: str | None = None,
+    ) -> None:
+        """Persist packing metadata and, when supplied, its immutable freeze binding."""
+        payload: dict[str, object] = {
+            "fingerprint": self.fingerprint,
+            "statistics": asdict(self.statistics),
+        }
+        if any(
+            value is not None
+            for value in (
+                source_corpus_fingerprint,
+                source_split_fingerprint,
+                tokenizer_identifier,
+                tokenizer_revision,
+            )
+        ):
+            payload["source_freeze"] = {
+                "corpus_fingerprint": source_corpus_fingerprint,
+                "split_fingerprint": source_split_fingerprint,
+                "tokenizer": {
+                    "identifier": tokenizer_identifier,
+                    "revision": tokenizer_revision,
+                },
+            }
         Path(path).write_text(
-            json.dumps({"fingerprint": self.fingerprint, "statistics": asdict(self.statistics)}, indent=2),
+            json.dumps(payload, indent=2),
             encoding="utf-8",
         )
 
 
-def _fingerprint(sequences: list[dict[str, list[int]]]) -> str:
+def compute_packed_fingerprint(sequences: list[dict[str, list[int]]]) -> str:
+    """Fingerprint the canonical packed sequence representation."""
     hasher = hashlib.sha256()
     for sequence in sequences:
         hasher.update(json.dumps(sequence, separators=(",", ":"), sort_keys=True).encode("utf-8"))
@@ -95,4 +126,4 @@ def pack_documents(
         sequence_count=len(sequences),
         packing_efficiency=(len(stream) / (len(sequences) * sequence_length)) if sequences else 0.0,
     )
-    return PackedDataset(sequences=sequences, fingerprint=_fingerprint(sequences), statistics=stats)
+    return PackedDataset(sequences=sequences, fingerprint=compute_packed_fingerprint(sequences), statistics=stats)

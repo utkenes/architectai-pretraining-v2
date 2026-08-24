@@ -172,6 +172,7 @@ def test_experimental_config_enables_all_sources() -> None:
     assert configured["resilience4j_docs"].category == "reliability_resilience"
     assert configured["madr"].category == "adr_decision_reasoning"
     assert configured["opendatahub_adrs"].release_eligible is True
+    assert configured["opendatahub_adrs"].commercial_reuse_permitted is None
     assert configured["context_mapping"].license_id == "CC-BY-SA-4.0"
     assert configured["welcome_to_ddd"].include_patterns == ["README.md"]
     assert configured["mit_6824_lecture_notes"].category_hint == "distributed_systems"
