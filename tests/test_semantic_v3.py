@@ -36,6 +36,20 @@ def test_category_hint_is_not_final_category() -> None:
     assert doc.category == doc.primary_category
 
 
+def test_zero_signal_uses_auditable_category_hint_fallback_or_stays_unresolved() -> None:
+    fallback = annotate_document(
+        _doc("fallback", "source", "a.md", "This prose has no taxonomy signals.", 0)
+    )
+    assert fallback.primary_category == "software_architecture"
+    assert fallback.category_confidence == 0.1
+    assert "fallback:category_hint" in fallback.category_evidence
+    unresolved = annotate_document(
+        CorpusDocument(id="unknown", source_id="source", category="legacy_unknown", text="Plain prose.")
+    )
+    assert unresolved.primary_category is None
+    assert unresolved.metadata["classification_unresolved"] is True
+
+
 def test_concept_normalization_is_safe_and_canonical() -> None:
     assert normalize_concept("fault tolerance") == "fault-tolerance"
     assert normalize_concept("fault_tolerance") == "fault-tolerance"
