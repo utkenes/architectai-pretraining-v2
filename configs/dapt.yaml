@@ -6,8 +6,9 @@ tokenizer:
   identifier: "Qwen/Qwen3-8B"
   revision: "main"
 data:
-  train_path: "data/training/packed/train.jsonl"
-  validation_path: "data/training/packed/validation.jsonl"
+  # CLI validates the Semantic v3 freeze manifest before using these files.
+  train_path: "data/corpus_v3/freeze/packed/train.jsonl"
+  validation_path: "data/corpus_v3/freeze/packed/validation.jsonl"
   sequence_length: 2048
 training:
   output_dir: "outputs/dapt-smoke"
