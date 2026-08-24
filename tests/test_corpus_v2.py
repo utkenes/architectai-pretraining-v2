@@ -1,6 +1,7 @@
 """Focused tests for the audit-first external architecture corpus workflow."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -12,6 +13,7 @@ from architectai_pretraining.corpus_v2 import (
 )
 from architectai_pretraining.models import CorpusDocument
 from architectai_pretraining.relevance import ArchitectureRelevanceScorer
+from architectai_pretraining.sources import SourceConfig
 from architectai_pretraining.splitter import GroupCorpusSplitter
 from architectai_pretraining.tokenizer import MockTokenCounter
 
@@ -280,4 +282,38 @@ def test_capacity_uses_same_document_grouping_and_reports_funnel(
     )
     source = result["source_capacity"]["reliable"]
     assert source["documents_discovered"] == 1
+    assert source["documents_accepted"] == 1
+    assert source["documents_rejected"] == 0
+    assert source["tokens"] == source["eligible_tokens"]
     assert source["training_units"] == funnel["units_after_dedup"]
+
+
+def test_concept_aware_selection_prefers_less_dominant_source(tmp_path: pytest.TempPathFactory) -> None:
+    config = tmp_path / "corpus.yaml"  # type: ignore[operator]
+    _write_config(config)
+    pipeline = CorpusV2Pipeline(config, token_counter=MockTokenCounter())
+    policies = {
+        "dominant": SourceConfig(id="dominant", name="Dominant", category="reliability_resilience"),
+        "independent": SourceConfig(id="independent", name="Independent", category="reliability_resilience"),
+    }
+    pipeline.config = replace(
+        pipeline.config,
+        category_targets={"reliability_resilience": 1.0},
+        source_configs=list(policies.values()),
+    )
+
+    def doc(identifier: str, source_id: str) -> CorpusDocument:
+        return CorpusDocument(
+            id=identifier,
+            source_id=source_id,
+            category="reliability_resilience",
+            primary_category="reliability_resilience",
+            related_concepts=["backpressure"],
+            text="Backpressure protects a service under load.",
+            token_count=10,
+        )
+
+    docs = [*(doc(f"dominant-{index}", "dominant") for index in range(3)), doc("independent", "independent")]
+    selected, _ = pipeline._select(docs, 10, policies, allow_backfill=False)
+    assert selected[0].source_id == "independent"
+    assert "concept-aware selection" in selected[0].metadata["balance_selection"]

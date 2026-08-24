@@ -60,6 +60,7 @@ class CorpusV2Config:
     max_code_ratio: float
     max_source_share: float
     category_tolerance: float
+    concept_aware_selection: bool
     allow_preview_backfill: bool
     allow_freeze_backfill: bool
     category_targets: dict[str, float]
@@ -100,6 +101,7 @@ def load_corpus_v2_config(path: str | Path) -> CorpusV2Config:
         max_code_ratio=float(quality.get("max_code_ratio", 0.55)),
         max_source_share=float(balancing.get("max_source_token_share", 0.15)),
         category_tolerance=float(balancing.get("category_tolerance", 0.05)),
+        concept_aware_selection=bool(balancing.get("concept_aware_selection", True)),
         allow_preview_backfill=bool(balancing.get("allow_preview_backfill", True)),
         allow_freeze_backfill=bool(balancing.get("allow_freeze_backfill", False)),
         category_targets=targets,
@@ -381,6 +383,13 @@ class CorpusV2Pipeline:
         accepted: list[CorpusDocument] = []
         rejected_by_source: Counter[str] = Counter()
         rejection_reasons: dict[str, Counter[str]] = defaultdict(Counter)
+        accepted_documents: dict[str, set[str]] = defaultdict(set)
+        rejected_documents: dict[str, set[str]] = defaultdict(set)
+
+        def document_key(doc: CorpusDocument) -> str:
+            """Stable source-document identity before sections are grouped."""
+            return str(doc.metadata.get("provenance_group_id") or doc.relative_path or doc.id)
+
         for doc in candidates:
             reasons: list[str] = []
             if not domain.check(doc).is_relevant:
@@ -394,7 +403,9 @@ class CorpusV2Pipeline:
             if reasons:
                 rejected_by_source[doc.source_id] += 1
                 rejection_reasons[doc.source_id].update(reasons)
+                rejected_documents[doc.source_id].add(document_key(doc))
                 continue
+            accepted_documents[doc.source_id].add(document_key(doc))
             accepted.append(
                 doc.model_copy(
                     update={
@@ -404,9 +415,6 @@ class CorpusV2Pipeline:
                 )
             )
         quality_passing_units = len(accepted)
-        quality_passing_documents: dict[str, set[str]] = defaultdict(set)
-        for doc in accepted:
-            quality_passing_documents[doc.source_id].add(doc.relative_path or doc.id)
         grouped = group_adjacent_sections(accepted, self.counter, self.config.max_section_tokens)
         grouped = [
             doc.model_copy(
@@ -464,9 +472,9 @@ class CorpusV2Pipeline:
         for category, share in self.config.category_targets.items():
             available = category_tokens[category]
             desired = int(self.config.target_tokens * share)
-            contributors = [
-                source.id for source in self.config.source_configs if source.category == category
-            ]
+            contributors = sorted(
+                {doc.source_id for doc in eligible if (doc.primary_category or doc.category) == category}
+            )
             cause = "available"
             if not contributors:
                 cause = "no_source_configured"
@@ -495,7 +503,12 @@ class CorpusV2Pipeline:
             source.id: {
                 "candidate_documents": sum(1 for doc in raw_docs if doc.source_id == source.id),
                 "documents_discovered": sum(1 for doc in raw_docs if doc.source_id == source.id),
-                "documents_with_quality_passing_units": len(quality_passing_documents[source.id]),
+                "documents_accepted": len(accepted_documents[source.id]),
+                "documents_rejected": len(rejected_documents[source.id] - accepted_documents[source.id]),
+                "documents_with_rejected_sections": len(rejected_documents[source.id]),
+                # Kept as a compatibility alias for v2 consumers. It now
+                # reports actual source documents, not section fragments.
+                "documents_with_quality_passing_units": len(accepted_documents[source.id]),
                 "eligible_documents": source_docs[source.id],
                 "quality_passing_units_before_grouping": sum(
                     1 for doc in accepted if doc.source_id == source.id
@@ -505,6 +518,7 @@ class CorpusV2Pipeline:
                 "quality_rejected_units": rejected_by_source[source.id],
                 "major_rejection_reasons": dict(rejection_reasons[source.id].most_common()),
                 "eligible_tokens": source_tokens[source.id],
+                "tokens": source_tokens[source.id],
                 "capped_tokens": capped_source_tokens[source.id],
                 "license_training_status": source.license_training_status,
                 "release_eligible": source.release_eligible,
@@ -754,6 +768,19 @@ class CorpusV2Pipeline:
         )
         if frozen:
             self._assert_freeze_selection(selected, target_tokens)
+        for doc in selected:
+            ledger.append(
+                {
+                    "document_id": doc.id,
+                    "source_id": doc.source_id,
+                    "relative_path": doc.relative_path,
+                    "decision": "selected",
+                    "reason": str(doc.metadata.get("balance_selection", "selected")),
+                    "token_count": doc.token_count,
+                    "primary_category": doc.primary_category or doc.category,
+                    "related_concepts": doc.related_concepts,
+                }
+            )
         for doc, reason in balanced_out:
             ledger.append(
                 {
@@ -827,19 +854,28 @@ class CorpusV2Pipeline:
             concept: len({doc.source_id for doc in docs if concept in doc.related_concepts})
             for concept in {concept for doc in docs for concept in doc.related_concepts}
         }
+        concept_source_tokens: dict[str, Counter[str]] = defaultdict(Counter)
+        for doc in docs:
+            for concept in doc.related_concepts:
+                concept_source_tokens[concept][doc.source_id] += doc.token_count or 0
+
+        def concept_order_key(doc: CorpusDocument) -> tuple[float, float, float, str]:
+            """Prefer scarce concepts and less dominant sources deterministically."""
+            quality_key = -((doc.quality_score or 0) + (doc.architecture_relevance_score or 0))
+            if not self.config.concept_aware_selection or not doc.related_concepts:
+                return (10_000.0, 1.0, quality_key, doc.id)
+            source_counts = [concept_source_count[concept] for concept in doc.related_concepts]
+            source_shares = [
+                concept_source_tokens[concept][doc.source_id]
+                / max(1, sum(concept_source_tokens[concept].values()))
+                for concept in doc.related_concepts
+            ]
+            return (float(min(source_counts)), max(source_shares), quality_key, doc.id)
+
         for doc in docs:
             by_category[doc.primary_category or doc.category].append(doc)
         for documents in by_category.values():
-            documents.sort(
-                key=lambda doc: (
-                    min(
-                        (concept_source_count.get(concept, 0) for concept in doc.related_concepts),
-                        default=10_000,
-                    ),
-                    -((doc.quality_score or 0) + (doc.architecture_relevance_score or 0)),
-                    doc.id,
-                )
-            )
+            documents.sort(key=concept_order_key)
         category_limits = {
             category: int(target_tokens * target)
             for category, target in self.config.category_targets.items()
@@ -882,7 +918,14 @@ class CorpusV2Pipeline:
             ):
                 rejected.append((doc, "Target token tolerance reached."))
                 continue
-            selected.append(doc)
+            selection_reason = "category/source-balanced selection"
+            if self.config.concept_aware_selection and doc.related_concepts:
+                scarce = min(doc.related_concepts, key=lambda concept: (concept_source_count[concept], concept))
+                selection_reason = (
+                    "concept-aware selection: prioritised "
+                    f"{scarce} ({concept_source_count[scarce]} eligible sources)"
+                )
+            selected.append(doc.model_copy(update={"metadata": {**doc.metadata, "balance_selection": selection_reason}}))
             totals[category] += tokens
             source_totals[doc.source_id] += tokens
         # Preview may use remaining capacity for diagnostics; final freeze does not.
@@ -913,7 +956,16 @@ class CorpusV2Pipeline:
                 target_tokens * self.config.token_tolerance
             ):
                 continue
-            selected.append(doc)
+            selected.append(
+                doc.model_copy(
+                    update={
+                        "metadata": {
+                            **doc.metadata,
+                            "balance_selection": "preview backfill after category selection",
+                        }
+                    }
+                )
+            )
             selected_ids.add(doc.id)
             totals[doc.primary_category or doc.category] += tokens
             source_totals[doc.source_id] += tokens

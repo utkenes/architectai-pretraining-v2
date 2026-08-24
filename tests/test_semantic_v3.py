@@ -52,6 +52,16 @@ def test_candidates_do_not_mutate_canonical_vocabulary() -> None:
     assert "logical-clocks" not in CANONICAL_CONCEPTS
 
 
+def test_candidate_audit_includes_counts_and_source_qualified_provenance() -> None:
+    first = annotate_document(_doc("one", "one", "notes.md", "Logical clocks order events.", 0))
+    second = annotate_document(_doc("two", "two", "notes.md", "Logical clocks order messages.", 0))
+    report = coverage_report([first, second], min_tokens=1)
+    candidate = report["candidate_concepts"]["logical-clocks"]
+    assert candidate["source_count"] == 2
+    assert candidate["document_count"] == 2
+    assert candidate["documents"] == ["one:notes.md", "two:notes.md"]
+
+
 def test_adjacent_related_sections_group_in_order_without_cross_document_text() -> None:
     counter = MockTokenCounter()
     raft = annotate_document(_doc("one", "s", "raft.md", "Raft consensus and leader election.", 0))

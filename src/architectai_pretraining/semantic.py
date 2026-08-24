@@ -394,8 +394,12 @@ def coverage_report(
             "candidate_concept": candidate,
             "count": len(matched),
             "tokens": sum(doc.token_count or 0 for doc in matched),
+            "source_count": len({doc.source_id for doc in matched}),
+            "document_count": len({(doc.source_id, doc.relative_path or doc.id) for doc in matched}),
             "sources": sorted({doc.source_id for doc in matched}),
-            "documents": sorted({doc.relative_path or doc.id for doc in matched}),
+            "documents": sorted(
+                {f"{doc.source_id}:{doc.relative_path or doc.id}" for doc in matched}
+            ),
             "sample_sections": [doc.section_headings for doc in matched[:3]],
         }
     return {

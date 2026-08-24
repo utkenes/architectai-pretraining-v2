@@ -11,6 +11,7 @@ coverage: {min_concept_tokens: 1000, min_concept_sources: 2, min_concept_documen
 balancing:
   max_source_token_share: 0.15
   category_tolerance: 0.05
+  concept_aware_selection: true
   allow_preview_backfill: true
   allow_freeze_backfill: false
   category_token_targets: {software_architecture: 0.20, distributed_systems: 0.15, system_design: 0.10, reliability_resilience: 0.17, database_data_architecture: 0.17, adr_decision_reasoning: 0.15, domain_driven_design: 0.02, messaging_event_driven: 0.01, ai_agent_architecture: 0.01, networking_systems: 0.02}
