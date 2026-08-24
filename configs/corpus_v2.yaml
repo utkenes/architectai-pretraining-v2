@@ -21,7 +21,7 @@ balancing:
   concept_aware_selection: true
   allow_preview_backfill: true
   allow_freeze_backfill: false
-  category_token_targets: {software_architecture: 0.20, distributed_systems: 0.15, system_design: 0.10, reliability_resilience: 0.17, database_data_architecture: 0.17, adr_decision_reasoning: 0.15, domain_driven_design: 0.02, messaging_event_driven: 0.01, ai_agent_architecture: 0.01, networking_systems: 0.02}
+  category_token_targets: {software_architecture: 0.22, distributed_systems: 0.17, system_design: 0.12, reliability_resilience: 0.19, database_data_architecture: 0.19, adr_decision_reasoning: 0.05, domain_driven_design: 0.02, messaging_event_driven: 0.01, ai_agent_architecture: 0.01, networking_systems: 0.02}
 split: {train_ratio: 0.90, validation_ratio: 0.05, heldout_ratio: 0.05}
 
 sources:
