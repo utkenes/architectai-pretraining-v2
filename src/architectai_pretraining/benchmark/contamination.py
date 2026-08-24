@@ -16,6 +16,10 @@ def _get_ngrams(text: str, n: int = 4) -> set[str]:
     return {" ".join(words[i : i + n]) for i in range(len(words) - n + 1)}
 
 
+def _normalized(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
 def is_benchmark_path_excluded(path: str | Path) -> bool:
     """Verifies whether a file path falls under benchmark data directories that MUST be excluded from ingestion."""
     norm_path = str(Path(path)).replace("\\", "/").lower()
@@ -26,10 +30,15 @@ def check_benchmark_against_corpus(
     dataset: BenchmarkDataset,
     corpus_dir: str | Path,
     ngram_overlap_threshold: float = 0.50,
+    benchmark_containment_threshold: float = 0.80,
+    minimum_benchmark_ngrams: int = 5,
+    minimum_matching_ngrams: int = 4,
 ) -> Any:
     """Compares benchmark scenarios against raw/curated training corpus JSONL files.
 
-    Detects exact text matches and significant n-gram overlaps.
+    Detects exact benchmark reuse, Jaccard overlap, and high benchmark-side
+    containment. Containment is separately guarded for short samples so one
+    generic phrase cannot contaminate a scenario.
     """
 
     from architectai_pretraining.benchmark.models import ContaminationResult
@@ -54,9 +63,8 @@ def check_benchmark_against_corpus(
     contaminated_ids: set[str] = set()
 
     # Pre-index benchmark scenario n-grams
-    sample_ngrams = {
-        s.id: _get_ngrams(f"{s.scenario} {s.question}") for s in dataset.samples
-    }
+    sample_texts = {s.id: _normalized(f"{s.scenario} {s.question}") for s in dataset.samples}
+    sample_ngrams = {sample.id: _get_ngrams(sample_texts[sample.id]) for sample in dataset.samples}
 
     from architectai_pretraining.io import iter_dict_jsonl
 
@@ -70,8 +78,8 @@ def check_benchmark_against_corpus(
             doc_text = str(doc_dict.get("text", ""))
             if not doc_text:
                 continue
-
-            doc_ngrams = _get_ngrams(doc_text)
+            normalized_doc = _normalized(doc_text)
+            doc_ngrams = _get_ngrams(normalized_doc)
             if not doc_ngrams:
                 continue
 
@@ -82,8 +90,21 @@ def check_benchmark_against_corpus(
 
                 intersection = len(s_ngrams & doc_ngrams)
                 jaccard = intersection / max(1, len(s_ngrams | doc_ngrams))
-
-                if jaccard >= ngram_overlap_threshold:
+                containment = intersection / len(s_ngrams)
+                exact_match = sample_texts[sample.id] in normalized_doc
+                high_containment = (
+                    len(s_ngrams) >= minimum_benchmark_ngrams
+                    and intersection >= minimum_matching_ngrams
+                    and containment >= benchmark_containment_threshold
+                )
+                if exact_match or jaccard >= ngram_overlap_threshold or high_containment:
+                    trigger_reason = (
+                        "exact_benchmark_text"
+                        if exact_match
+                        else "high_benchmark_containment"
+                        if high_containment
+                        else "high_ngram_jaccard"
+                    )
                     contaminated_ids.add(sample.id)
                     flagged_items.append(
                         {
@@ -91,7 +112,11 @@ def check_benchmark_against_corpus(
                             "corpus_file": str(jsonl_file),
                             "corpus_doc_id": doc_id,
                             "ngram_jaccard": round(jaccard, 4),
-                            "reason": f"High n-gram overlap ({jaccard:.2%}) with training document {doc_id}",
+                            "benchmark_ngram_containment": round(containment, 4),
+                            "matching_ngram_count": intersection,
+                            "benchmark_ngram_count": len(s_ngrams),
+                            "trigger_reason": trigger_reason,
+                            "reason": f"{trigger_reason} with training document {doc_id}",
                         }
                     )
 

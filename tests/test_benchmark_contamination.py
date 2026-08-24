@@ -75,4 +75,35 @@ def test_check_benchmark_against_corpus(tmp_path: pytest.TempPathFactory) -> Non
     assert len(res.flagged_items) == 1
     assert res.flagged_items[0]["sample_id"] == "archbench_001"
 
+
+def test_benchmark_side_containment_detects_embedding_in_long_document(tmp_path: Path) -> None:
+    corpus_dir = tmp_path / "curated"
+    corpus_dir.mkdir()
+    scenario = (
+        "A payment service needs durable ledger writes, idempotent retry handling, "
+        "ordered event processing, clear ownership boundaries, observable failures, "
+        "and safe recovery after dependent systems become temporarily unavailable."
+    )
+    question = "Which architecture protects reconciliation correctness while preserving operational simplicity?"
+    long_text = f"{scenario} incidental context words {question} " + "background " * 150
+    from architectai_pretraining.io import write_dict_jsonl
+
+    write_dict_jsonl([{"id": "embedded", "text": long_text}], corpus_dir / "train.jsonl")
+    dataset = BenchmarkDataset(
+        [
+            BenchmarkSample(
+                id="embedded-sample",
+                category="architecture_choice",
+                difficulty="medium",
+                scenario=scenario,
+                question=question,
+            )
+        ]
+    )
+    result = check_benchmark_against_corpus(dataset, corpus_dir)
+
+    assert result.contaminated_scenarios == 1
+    assert result.flagged_items[0]["trigger_reason"] == "high_benchmark_containment"
+    assert result.flagged_items[0]["benchmark_ngram_containment"] >= 0.8
+
 # Benchmark test_benchmark_contamination.py test update
