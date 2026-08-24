@@ -155,6 +155,100 @@ def _normalize_structural_headings(doc: CorpusDocument) -> CorpusDocument:
     return doc.model_copy(update={"text": text}) if text != doc.text else doc
 
 
+_TRAINING_FORMAT_SECTION = re.compile(
+    r"(?i)^\s*(?:flashcards?|quiz(?:zes)?|self[- ]?test|knowledge check|answer key|answers?)\s*[:\-–—]?\s*$"
+)
+_MALFORMED_HEADING = re.compile(
+    r"(?im)^\s*(?:#{1,6}|={1,6})\s*(?:[{}|/]+|\[source\s*,\s*[^\]]+\])\s*$"
+)
+_PRESENTATION_DIRECTIVE = re.compile(
+    r"(?im)^\s*(?:\.\.\s+(?:index|contents|toctree)::.*|\.\.\s+_[\w.-]+:\s*|\[\[[^\]]+\]\])\s*$"
+)
+
+
+def _sanitize_presentation_residue(doc: CorpusDocument) -> CorpusDocument:
+    """Unwrap presentation markup and remove only unmistakable structural residue."""
+    text = doc.text
+    text = re.sub(r"(?is)<details\b[^>]*>|</details\s*>", "", text)
+    text = re.sub(r"(?is)<summary\b[^>]*>(.*?)</summary\s*>", r"\1", text)
+    text = _MALFORMED_HEADING.sub("", text)
+    text = _PRESENTATION_DIRECTIVE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return doc.model_copy(update={"text": text}) if text != doc.text else doc
+
+
+def _strip_training_format_sections(doc: CorpusDocument) -> CorpusDocument:
+    """Remove whole standalone flashcard/quiz/review sections, never ordinary questions."""
+    parts = re.split(r"(?m)(?=^(?:#{1,6}\s+|={1,6}\s+))", doc.text)
+    kept: list[str] = []
+    for part in parts:
+        lines = part.splitlines()
+        first = lines[0].strip() if lines else ""
+        title = re.sub(r"^(?:#{1,6}\s+|={1,6}\s+)", "", first).strip()
+        if _TRAINING_FORMAT_SECTION.fullmatch(title):
+            continue
+        kept.append(part)
+    text = "".join(kept).strip()
+    return doc.model_copy(update={"text": text}) if text != doc.text else doc
+
+
+def _prepare_for_sectioning(doc: CorpusDocument, boilerplate: BoilerplateCleaner) -> CorpusDocument:
+    """Apply narrow sanitation before sectionization without changing provenance."""
+    cleaned = TextCleaner().clean_document(doc)
+    cleaned = boilerplate.clean_document(cleaned)
+    cleaned = _normalize_structural_headings(cleaned)
+    cleaned = _sanitize_presentation_residue(cleaned)
+    return _strip_training_format_sections(cleaned)
+
+
+def cleanliness_audit(docs: list[CorpusDocument], max_issues: int = 100) -> dict[str, Any]:
+    """Bounded deterministic final-corpus hygiene audit for preview and freeze."""
+    issues: list[dict[str, Any]] = []
+
+    def add(doc: CorpusDocument, severity: str, issue: str) -> None:
+        if len(issues) < max_issues:
+            issues.append(
+                {
+                    "severity": severity,
+                    "issue": issue,
+                    "document_id": doc.id,
+                    "source_id": doc.source_id,
+                    "relative_path": doc.relative_path,
+                    "section_title": doc.section_title,
+                }
+            )
+
+    for doc in sorted(docs, key=lambda item: item.id):
+        text = doc.text.strip()
+        title = (doc.section_title or doc.title or "").strip()
+        if not text:
+            add(doc, "critical", "empty_text")
+        if (doc.token_count or len(text.split())) <= 3:
+            add(doc, "warning", "extremely_short_unit")
+        if _MALFORMED_HEADING.search(text) or _MALFORMED_HEADING.fullmatch(f"# {title}"):
+            add(doc, "critical", "malformed_heading_residue")
+        if re.search(r"(?i)\b(?:TODO|TBD|PLACEHOLDER)\b|\[insert [^\]]+\]", text):
+            add(doc, "warning", "placeholder_marker")
+        if _TRAINING_FORMAT_SECTION.fullmatch(title):
+            add(doc, "critical", "training_format_section")
+        if re.fullmatch(r"(?i)(?:contributors?|social links?|community|resources?|navigation)", title):
+            add(doc, "critical", "navigation_or_social_section")
+        if (
+            re.search(r"(?im)^\s*<\/?(?:details|summary)\b", text)
+            or _PRESENTATION_DIRECTIVE.search(text)
+        ):
+            add(doc, "critical", "unresolved_presentation_directive")
+    critical = [issue for issue in issues if issue["severity"] == "critical"]
+    warnings = [issue for issue in issues if issue["severity"] == "warning"]
+    return {
+        "checked_units": len(docs),
+        "critical_count": len(critical),
+        "warning_count": len(warnings),
+        "issues": issues,
+        "truncated": len(issues) == max_issues,
+    }
+
+
 def _license_concerns(status: str) -> list[str]:
     return {
         "approved": [],
@@ -686,14 +780,11 @@ class CorpusV2Pipeline:
         raw_docs: list[CorpusDocument] = []
         for source in self.config.source_configs:
             raw_docs.extend(get_adapter(source).ingest())
-        cleaner = TextCleaner()
         boilerplate = BoilerplateCleaner()
         candidates: list[CorpusDocument] = []
         for raw in raw_docs:
             source = policies[raw.source_id]
-            cleaned = _normalize_structural_headings(
-                boilerplate.clean_document(cleaner.clean_document(raw))
-            )
+            cleaned = _prepare_for_sectioning(raw, boilerplate)
             cleaned = _strip_policy_sections(cleaned, source.strip_section_patterns)
             candidates.extend(
                 annotate_document(_assign_section_category(section, source.section_category_rules))
@@ -1013,13 +1104,10 @@ class CorpusV2Pipeline:
                 )
             raw_docs.extend(docs)
 
-        cleaner = TextCleaner()
         boilerplate = BoilerplateCleaner()
         candidates: list[CorpusDocument] = []
         for raw in raw_docs:
-            cleaned = _normalize_structural_headings(
-                boilerplate.clean_document(cleaner.clean_document(raw))
-            )
+            cleaned = _prepare_for_sectioning(raw, boilerplate)
             source = policies[raw.source_id]
             cleaned = _strip_policy_sections(cleaned, source.strip_section_patterns)
             candidates.extend(
@@ -1151,13 +1239,20 @@ class CorpusV2Pipeline:
                 }
             )
         splitter = GroupCorpusSplitter(*self.config.split_ratios, seed=self.config.seed)
-        split = splitter.split(selected)
+        cleanliness = cleanliness_audit(selected)
+        if frozen and cleanliness["critical_count"]:
+            raise ValueError(
+                "Freeze cleanliness preflight failed: "
+                f"{cleanliness['critical_count']} critical sanitation violations remain."
+            )
+        split = splitter.split(selected, require_all_nonempty=frozen)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         write_jsonl(split.train_documents, out / "train.jsonl")
         write_jsonl(split.validation_documents, out / "validation.jsonl")
         write_jsonl(split.heldout_documents, out / "heldout.jsonl")
         write_dict_jsonl(ledger, out / "audit.jsonl")
+        (out / "cleanliness_audit.json").write_text(json.dumps(cleanliness, indent=2), encoding="utf-8")
         semantic = coverage_report(
             selected,
             min_tokens=self.config.concept_min_tokens,
@@ -1250,6 +1345,10 @@ class CorpusV2Pipeline:
                     "release_eligible_units": len(release_docs),
                     "release_ineligible_units": len(selected) - len(release_docs),
                     "release_eligible_tokens": sum(doc.token_count or 0 for doc in release_docs),
+                },
+                "cleanliness_audit": {
+                    "critical_count": cleanliness["critical_count"],
+                    "warning_count": cleanliness["warning_count"],
                 },
                 "artifact_hashes": {
                     name: _sha256_file(out / name)

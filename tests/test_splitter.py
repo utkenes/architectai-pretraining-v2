@@ -1,7 +1,9 @@
 """Tests for deterministic corpus splitter."""
 
+import pytest
+
 from architectai_pretraining.models import CorpusDocument
-from architectai_pretraining.splitter import CorpusSplitter
+from architectai_pretraining.splitter import CorpusSplitter, GroupCorpusSplitter
 
 
 def test_deterministic_split_order_invariance() -> None:
@@ -49,3 +51,55 @@ def test_splitter_preserves_all_documents() -> None:
 
     all_split_ids = {d.id for d in res.train_documents} | {d.id for d in res.validation_documents}
     assert all_split_ids == {d.id for d in docs}
+
+
+def test_group_splitter_populates_all_nonzero_splits_without_crossing_provenance_groups() -> None:
+    docs = [
+        CorpusDocument(
+            id=f"doc-{group}-{part}",
+            source_id="source",
+            category="category",
+            text=f"Architecture prose for group {group} part {part}.",
+            metadata={"provenance_group_id": f"group-{group}"},
+        )
+        for group in range(29)
+        for part in range(2)
+    ]
+    splitter = GroupCorpusSplitter(0.90, 0.05, 0.05, seed=7)
+    first = splitter.split(docs, require_all_nonempty=True)
+    second = splitter.split(list(reversed(docs)), require_all_nonempty=True)
+
+    splits = (first.train_documents, first.validation_documents, first.heldout_documents)
+    assert all(split for split in splits)
+    memberships: dict[str, set[str]] = {}
+    for split_name, split_docs in zip(("train", "validation", "heldout"), splits, strict=True):
+        for doc in split_docs:
+            memberships.setdefault(doc.metadata["provenance_group_id"], set()).add(split_name)
+    assert len(memberships) == 29
+    assert all(len(group_splits) == 1 for group_splits in memberships.values())
+    assert {
+        name: {doc.id for doc in split_docs}
+        for name, split_docs in zip(("train", "validation", "heldout"), splits, strict=True)
+    } == {
+        name: {doc.id for doc in split_docs}
+        for name, split_docs in zip(
+            ("train", "validation", "heldout"),
+            (second.train_documents, second.validation_documents, second.heldout_documents),
+            strict=True,
+        )
+    }
+
+
+def test_group_splitter_fails_freeze_when_too_few_groups_exist() -> None:
+    docs = [
+        CorpusDocument(
+            id=f"doc-{group}",
+            source_id="source",
+            category="category",
+            text="Architecture prose.",
+            metadata={"provenance_group_id": f"group-{group}"},
+        )
+        for group in range(2)
+    ]
+    with pytest.raises(ValueError, match="Freeze split integrity requires"):
+        GroupCorpusSplitter(0.90, 0.05, 0.05, seed=7).split(docs, require_all_nonempty=True)

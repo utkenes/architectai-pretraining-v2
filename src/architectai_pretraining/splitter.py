@@ -97,21 +97,59 @@ class GroupCorpusSplitter:
         self.heldout_ratio = heldout_ratio
         self.seed = seed
 
-    def split(self, documents: list[CorpusDocument]) -> GroupSplitResult:
+    def split(
+        self, documents: list[CorpusDocument], *, require_all_nonempty: bool = False
+    ) -> GroupSplitResult:
         groups: dict[str, list[CorpusDocument]] = {}
         for doc in documents:
             group_id = str(doc.metadata.get("provenance_group_id") or doc.id)
             groups.setdefault(group_id, []).append(doc)
-        train: list[CorpusDocument] = []
-        validation: list[CorpusDocument] = []
-        heldout: list[CorpusDocument] = []
+        active_splits = [
+            name
+            for name, ratio in (
+                ("train", self.train_ratio),
+                ("validation", self.validation_ratio),
+                ("heldout", self.heldout_ratio),
+            )
+            if ratio > 0
+        ]
+        if require_all_nonempty and len(groups) < len(active_splits):
+            raise ValueError(
+                "Freeze split integrity requires at least one provenance group for each non-zero split; "
+                f"found {len(groups)} groups for {len(active_splits)} configured splits."
+            )
+        assignments: dict[str, list[str]] = {name: [] for name in active_splits}
         for group_id in sorted(groups):
             digest = hashlib.sha256(f"{self.seed}:{group_id}".encode()).digest()
             score = int.from_bytes(digest[:8], "big") / 2**64
             if score < self.train_ratio:
-                train.extend(groups[group_id])
+                assignments["train"].append(group_id)
             elif score < self.train_ratio + self.validation_ratio:
-                validation.extend(groups[group_id])
+                assignments["validation"].append(group_id)
             else:
-                heldout.extend(groups[group_id])
+                assignments["heldout"].append(group_id)
+        # Hash assignment remains the default. When enough distinct provenance
+        # groups exist, deterministically move one whole group to each empty
+        # non-zero split rather than silently producing an unusable preview.
+        if len(groups) >= len(active_splits):
+            for target in active_splits:
+                if assignments[target]:
+                    continue
+                donors = [name for name in active_splits if len(assignments[name]) > 1]
+                if not donors:
+                    break
+                donor = sorted(donors, key=lambda name: (-len(assignments[name]), name))[0]
+                move = sorted(
+                    assignments[donor],
+                    key=lambda group_id: hashlib.sha256(
+                        f"{self.seed}:{target}:{group_id}".encode()
+                    ).hexdigest(),
+                )[0]
+                assignments[donor].remove(move)
+                assignments[target].append(move)
+        if require_all_nonempty and any(not assignments[name] for name in active_splits):
+            raise ValueError("Freeze split integrity could not populate every configured non-zero split.")
+        train = [doc for group_id in assignments.get("train", []) for doc in groups[group_id]]
+        validation = [doc for group_id in assignments.get("validation", []) for doc in groups[group_id]]
+        heldout = [doc for group_id in assignments.get("heldout", []) for doc in groups[group_id]]
         return GroupSplitResult(train, validation, heldout)

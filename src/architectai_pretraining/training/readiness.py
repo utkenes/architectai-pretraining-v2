@@ -8,6 +8,7 @@ from typing import Any
 
 from architectai_pretraining.benchmark.contamination import check_benchmark_against_corpus
 from architectai_pretraining.benchmark.dataset import load_benchmark_dataset
+from architectai_pretraining.corpus_v2 import cleanliness_audit
 from architectai_pretraining.io import read_jsonl
 from architectai_pretraining.semantic import CANONICAL_CATEGORIES
 from architectai_pretraining.training.corpus_contract import (
@@ -29,6 +30,7 @@ def generate_readiness_report(
     manifest = artifact.manifest
     splits = {name: read_jsonl(artifact.directory / f"{name}.jsonl") for name in ("train", "validation", "heldout")}
     split_integrity = split_integrity_report(artifact)
+    cleanliness = cleanliness_audit([doc for docs in splits.values() for doc in docs])
     invalid = [
         doc.id
         for docs in splits.values()
@@ -57,6 +59,10 @@ def generate_readiness_report(
         blockers.append(f"Packed data integrity gate failed: {error}")
     if not split_integrity["valid"]:
         blockers.append("Train/validation/heldout split isolation failed.")
+    if cleanliness["critical_count"]:
+        blockers.append(
+            f"Corpus cleanliness audit found {cleanliness['critical_count']} critical violations."
+        )
     if invalid:
         blockers.append(f"Invalid or unresolved Semantic v3 records: {len(invalid)}.")
     if not benchmark_exists:
@@ -92,6 +98,7 @@ def generate_readiness_report(
         "corpus_distribution": {"source": manifest["source_distribution"], "category": categories},
         "licensing": manifest["release_eligibility"],
         "split_integrity": split_integrity,
+        "cleanliness_audit": cleanliness,
         "benchmark_contamination": contamination_payload,
         "packing_statistics": {
             "packed_train_valid": packed["train"],
