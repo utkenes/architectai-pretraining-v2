@@ -8,13 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
-def sha256_file(path: str | Path) -> str:
-    hasher = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+from architectai_pretraining.training.corpus_contract import (
+    SemanticFreezeArtifact,
+    load_semantic_freeze,
+    sha256_file,
+)
 
 
 def current_git_head() -> str:
@@ -31,38 +29,50 @@ def create_dataset_package(
     curated_dir: str | Path,
     output_path: str | Path,
     build_git_sha: str | None = None,
-    dataset_version: str = "architectai_dapt_dataset_v2",
-    training_dir: str | Path = "data/training",
+    dataset_version: str = "architectai_dapt_dataset_v3",
+    training_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Package immutable curated and packed metadata; raw clones stay excluded."""
+    """Package an immutable Semantic v3 freeze and its independent packed splits."""
     resolved_git_sha = build_git_sha or current_git_head()
-    source = Path(curated_dir)
-    training = Path(training_dir)
-    required = ["train.jsonl", "validation.jsonl", "curation_manifest.json"]
-    missing = [name for name in required if not (source / name).is_file()]
-    if missing:
-        raise FileNotFoundError(f"Cannot package missing curated artifacts: {', '.join(missing)}")
-    manifest = json.loads((source / "curation_manifest.json").read_text(encoding="utf-8"))
-    files = required + ["corpus_audit_report.md", "source_audit.json", "source_audit.md", "license_audit.json", "license_audit.md"]
-    present = [name for name in files if (source / name).is_file()]
+    artifact: SemanticFreezeArtifact = load_semantic_freeze(curated_dir)
+    source = artifact.directory
+    training = Path(training_dir) if training_dir else source / "packed"
+    required = [
+        "train.jsonl", "validation.jsonl", "heldout.jsonl", "corpus_manifest.json", "audit.jsonl",
+        "concept_coverage.json", "category_coverage.json", "source_diagnostics.json", "license_audit.json",
+    ]
+    manifest = artifact.manifest
+    present = required
     file_hashes = {name: sha256_file(source / name) for name in present}
-    training_files = ["readiness_report.json", "readiness_report.md", "final_readiness_report.json", "final_readiness_report.md", "packed/train_manifest.json", "packed/validation_manifest.json"]
+    training_files = ["train.jsonl", "validation.jsonl", "train_manifest.json", "validation_manifest.json"]
     present_training = [name for name in training_files if (training / name).is_file()]
-    file_hashes.update({f"training/{name}": sha256_file(training / name) for name in present_training})
+    if len(present_training) != len(training_files):
+        missing_packed = sorted(set(training_files) - set(present_training))
+        raise FileNotFoundError(
+            "Cannot package a Semantic v3 freeze before deterministic train/validation packing: "
+            + ", ".join(missing_packed)
+        )
+    file_hashes.update({f"packed/{name}": sha256_file(training / name) for name in present_training})
+    packed_manifests = {
+        name: json.loads((training / f"{name}_manifest.json").read_text(encoding="utf-8"))
+        for name in ("train", "validation")
+        if (training / f"{name}_manifest.json").is_file()
+    }
     package_manifest: dict[str, Any] = {
         "dataset_version": dataset_version,
         "created_at": datetime.now(UTC).isoformat(),
-        "curated_fingerprint": manifest["output_corpus_fingerprint"],
-        "train_fingerprint": sha256_file(source / "train.jsonl"),
-        "validation_fingerprint": sha256_file(source / "validation.jsonl"),
-        "tokenizer_identifier": manifest["tokenizer_identifier"],
-        "tokenizer_revision": manifest["tokenizer_revision"],
-        "train_tokens": manifest["train_tokens"],
-        "validation_tokens": manifest["validation_tokens"],
-        "train_documents": manifest["train_documents_count"],
-        "validation_documents": manifest["validation_documents_count"],
+        "corpus_version": manifest["corpus_version"],
+        "semantic_schema_version": manifest["semantic_schema_version"],
+        "corpus_fingerprint": artifact.corpus_fingerprint,
+        "split_fingerprints": manifest["split_fingerprints"],
+        "tokenizer": manifest["tokenizer"],
         "build_git_sha": resolved_git_sha,
-        "sequence_length": 2048,
+        "sequence_length": next(iter(packed_manifests.values()), {}).get("statistics", {}).get("sequence_length"),
+        "packed_fingerprints": {name: value["fingerprint"] for name, value in packed_manifests.items()},
+        "audit_hashes": {
+            name: file_hashes[name]
+            for name in ("license_audit.json", "source_diagnostics.json", "concept_coverage.json", "category_coverage.json")
+        },
         "files": file_hashes,
     }
     target = Path(output_path)
@@ -71,7 +81,7 @@ def create_dataset_package(
         for name in present:
             archive.write(source / name, arcname=name)
         for name in present_training:
-            archive.write(training / name, arcname=f"training/{name}")
+            archive.write(training / name, arcname=f"packed/{name}")
         archive.writestr("dataset_manifest.json", json.dumps(package_manifest, indent=2))
     package_manifest["package_sha256"] = sha256_file(target)
     Path(f"{target}.sha256").write_text(f"{package_manifest['package_sha256']}  {target.name}\n", encoding="utf-8")

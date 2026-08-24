@@ -227,28 +227,44 @@ def main() -> None:
     dapt_actions.add_parser("preflight", help="Inspect GPU and dependency capability")
     dapt_verify = dapt_actions.add_parser("verify-data", help="Verify a Colab dataset package before model loading")
     dapt_verify.add_argument("--manifest", required=True, help="Path to checksum-verified dataset archive")
-    dapt_package = dapt_actions.add_parser("package-data", help="Create checksum-verified curated dataset package")
-    dapt_package.add_argument("--curated-dir", default="data/final/curated")
-    dapt_package.add_argument("--output", default="data/training/architectai_dapt_dataset_v2.zip")
+    dapt_package = dapt_actions.add_parser("package-data", help="Package a canonical Semantic v3 freeze")
+    dapt_package.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
+    dapt_package.add_argument("--packed-dir", default=None)
+    dapt_package.add_argument("--output", default="data/training/architectai_dapt_dataset_v3.zip")
     dapt_package.add_argument("--build-git-sha", default=None, help="Optional explicit build SHA; defaults to git rev-parse HEAD")
-    dapt_pack = dapt_actions.add_parser("pack", help="Prepare deterministic causal-LM train and validation JSONL")
-    dapt_pack.add_argument("--curated-dir", default="data/final/curated")
-    dapt_pack.add_argument("--output-dir", default="data/training/packed")
+    dapt_pack = dapt_actions.add_parser("pack", help="Pack train and validation from a Semantic v3 freeze")
+    dapt_pack.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
+    dapt_pack.add_argument("--output-dir", default=None)
     dapt_pack.add_argument("--sequence-length", type=int, default=2048)
     dapt_readiness = dapt_actions.add_parser("readiness", help="Generate Stage 4.1 GO/NO-GO report")
-    dapt_readiness.add_argument("--curated-dir", default="data/final/curated")
+    dapt_readiness.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
     dapt_readiness.add_argument("--output-dir", default="data/training")
     dapt_final_readiness = dapt_actions.add_parser("final-readiness", help="Generate Stage 4.2 final report")
-    dapt_final_readiness.add_argument("--curated-dir", default="data/final/curated")
+    dapt_final_readiness.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
     dapt_final_readiness.add_argument("--output-dir", default="data/training")
-    dapt_final_readiness.add_argument("--archive", default="data/training/architectai_dapt_dataset_v2.zip")
+    dapt_final_readiness.add_argument("--archive", default="data/training/architectai_dapt_dataset_v3.zip")
     dapt_smoke = dapt_actions.add_parser("smoke", help="Show guarded Stage 5A smoke execution requirements")
     dapt_smoke.add_argument("--max-steps", type=int, default=20)
     dapt_smoke.add_argument("--config", default="configs/dapt.yaml")
     dapt_smoke.add_argument("--output-dir", default=None)
     dapt_smoke.add_argument("--resume-from", default=None)
+    dapt_smoke.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
+    dapt_smoke.add_argument("--readiness-dir", default="data/training")
+    for dapt_action_parser in (dapt_package, dapt_pack, dapt_readiness, dapt_final_readiness, dapt_smoke):
+        dapt_action_parser.add_argument(
+            "--curated-dir",
+            dest="legacy_curated_dir",
+            default=None,
+            help="Deprecated legacy Stage 3 path; Semantic v3 DAPT requires --corpus-dir pointing to a freeze.",
+        )
 
     args = parser.parse_args()
+
+    if args.command == "dapt" and getattr(args, "legacy_curated_dir", None):
+        raise ValueError(
+            "Legacy --curated-dir is not a valid Semantic v3 DAPT input. "
+            "Create an explicit corpus freeze and pass it with --corpus-dir."
+        )
 
     if args.command == "corpus":
         if args.corpus_action == "audit":
@@ -288,23 +304,29 @@ def main() -> None:
         elif args.dapt_action == "package-data":
             from architectai_pretraining.training.package import create_dataset_package
 
-            print(json.dumps(create_dataset_package(args.curated_dir, args.output, args.build_git_sha), indent=2))
+            print(json.dumps(create_dataset_package(args.corpus_dir, args.output, args.build_git_sha, training_dir=args.packed_dir), indent=2))
         elif args.dapt_action == "pack":
             from architectai_pretraining.tokenizer import HuggingFaceTokenCounter
+            from architectai_pretraining.training.corpus_contract import (
+                load_semantic_freeze,
+                validate_packing_tokenizer,
+            )
             from architectai_pretraining.training.data import pack_documents
 
-            tokenizer = HuggingFaceTokenCounter()
-            curated = Path(args.curated_dir)
-            output = Path(args.output_dir)
+            artifact = load_semantic_freeze(args.corpus_dir)
+            tokenizer_info = artifact.manifest["tokenizer"]
+            tokenizer = HuggingFaceTokenCounter(tokenizer_info["identifier"], tokenizer_info["revision"])
+            validate_packing_tokenizer(artifact, tokenizer.identifier, tokenizer.revision)
+            output = Path(args.output_dir) if args.output_dir else artifact.directory / "packed"
             for split in ("train", "validation"):
-                packed = pack_documents(read_jsonl(curated / f"{split}.jsonl"), tokenizer, args.sequence_length)
+                packed = pack_documents(read_jsonl(artifact.directory / f"{split}.jsonl"), tokenizer, args.sequence_length)
                 packed.write_jsonl(output / f"{split}.jsonl")
                 packed.write_manifest(output / f"{split}_manifest.json")
                 print(f"{split}: {packed.statistics.sequence_count} sequences; fingerprint={packed.fingerprint}")
         elif args.dapt_action == "readiness":
             from architectai_pretraining.training.readiness import generate_readiness_report
 
-            result = generate_readiness_report(args.curated_dir, args.output_dir)
+            result = generate_readiness_report(args.corpus_dir, args.output_dir)
             for key in ("READY_FOR_COLAB_BASELINE", "READY_FOR_STAGE_5A_SMOKE", "GO_FOR_FULL_DAPT"):
                 print(f"{key}={str(result[key]).lower()}")
             if result["blocking_issues"]:
@@ -316,25 +338,39 @@ def main() -> None:
                 generate_final_readiness_report,
             )
 
-            result = generate_final_readiness_report(args.curated_dir, args.output_dir, args.archive)
+            result = generate_final_readiness_report(args.corpus_dir, args.output_dir, args.archive)
             for key in ("READY_FOR_COLAB", "READY_TO_RUN_REAL_BASELINE", "READY_FOR_STAGE_5A_REAL_SMOKE", "GO_FOR_FULL_DAPT"):
                 print(f"{key}={str(result[key]).lower()}")
         else:
             if args.max_steps < 1 or args.max_steps > 50:
                 raise ValueError("Stage 5A smoke must use 1-50 steps.")
-            from architectai_pretraining.manifest import CurationManifest
+            from architectai_pretraining.training.corpus_contract import (
+                load_semantic_freeze,
+                validate_packing_tokenizer,
+            )
+            from architectai_pretraining.training.readiness import generate_readiness_report
             from architectai_pretraining.training.runner import (
                 load_smoke_config,
                 run_smoke_training,
             )
 
             smoke_config = load_smoke_config(args.config, args.output_dir)
-            smoke_config = dataclasses.replace(smoke_config, max_steps=args.max_steps)
-            curated = Path("data/final/curated")
-            manifest = CurationManifest(**json.loads((curated / "curation_manifest.json").read_text(encoding="utf-8")))
-            train_packed = json.loads((Path("data/training/packed") / "train_manifest.json").read_text(encoding="utf-8"))
-            validation_packed = json.loads((Path("data/training/packed") / "validation_manifest.json").read_text(encoding="utf-8"))
-            result = run_smoke_training(smoke_config, manifest.output_corpus_fingerprint, train_packed["fingerprint"], validation_packed["fingerprint"], args.resume_from)
+            artifact = load_semantic_freeze(args.corpus_dir)
+            tokenizer_info = artifact.manifest["tokenizer"]
+            validate_packing_tokenizer(artifact, smoke_config.tokenizer_identifier, smoke_config.tokenizer_revision)
+            readiness = generate_readiness_report(artifact.directory, args.readiness_dir)
+            if not readiness["READY_FOR_STAGE_5A_SMOKE"]:
+                raise RuntimeError("Semantic v3 readiness gate failed; smoke training will not load a model.")
+            packed_dir = artifact.directory / "packed"
+            smoke_config = dataclasses.replace(
+                smoke_config,
+                max_steps=args.max_steps,
+                train_path=packed_dir / "train.jsonl",
+                validation_path=packed_dir / "validation.jsonl",
+            )
+            train_packed = json.loads((packed_dir / "train_manifest.json").read_text(encoding="utf-8"))
+            validation_packed = json.loads((packed_dir / "validation_manifest.json").read_text(encoding="utf-8"))
+            result = run_smoke_training(smoke_config, artifact.corpus_fingerprint, train_packed["fingerprint"], validation_packed["fingerprint"], args.resume_from)
             print(json.dumps(result, indent=2))
         return
 

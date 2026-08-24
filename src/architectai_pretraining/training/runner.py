@@ -27,6 +27,7 @@ class SmokeRunConfig:
     model_identifier: str
     model_revision: str
     tokenizer_identifier: str
+    tokenizer_revision: str
     sequence_length: int
     train_path: Path
     validation_path: Path
@@ -65,7 +66,7 @@ def load_smoke_config(path: str | Path, output_dir: str | Path | None = None) ->
     diagnostic_dataset = evaluation.get("diagnostic_dataset_path")
     return SmokeRunConfig(
         model_identifier=model["identifier"], model_revision=model["revision"],
-        tokenizer_identifier=tokenizer["identifier"], sequence_length=int(data["sequence_length"]),
+        tokenizer_identifier=tokenizer["identifier"], tokenizer_revision=tokenizer.get("revision", "main"), sequence_length=int(data["sequence_length"]),
         train_path=Path(data["train_path"]), validation_path=Path(data["validation_path"]),
         output_dir=Path(output_dir or training["output_dir"]), strategy=mode,
         max_steps=int(training["max_steps"]), learning_rate=float(training["learning_rate"]),

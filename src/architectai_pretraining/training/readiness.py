@@ -1,91 +1,96 @@
-"""Machine-readable Stage 4.1 readiness report generation."""
+"""Machine-readable readiness gates for a canonical Semantic Corpus v3 freeze."""
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Any
 
+from architectai_pretraining.benchmark.contamination import check_benchmark_against_corpus
+from architectai_pretraining.benchmark.dataset import load_benchmark_dataset
 from architectai_pretraining.io import read_jsonl
-from architectai_pretraining.manifest import CurationManifest, compute_corpus_fingerprint
-
-
-def _normalized(text: str) -> str:
-    return " ".join(text.lower().split())
+from architectai_pretraining.semantic import CANONICAL_CATEGORIES
+from architectai_pretraining.training.corpus_contract import (
+    load_semantic_freeze,
+    split_integrity_report,
+)
 
 
 def generate_readiness_report(
     curated_dir: str | Path,
     output_dir: str | Path = "data/training",
     benchmark_path: str | Path = "data/benchmark/architectai_v1.jsonl",
+    max_contamination_rate: float = 0.0,
 ) -> dict[str, Any]:
-    """Audit required correctness gates without declaring full DAPT readiness."""
-    curated = Path(curated_dir)
+    """Evaluate freeze, split, license, and benchmark gates without training."""
+    artifact = load_semantic_freeze(curated_dir)
     output = Path(output_dir)
-    manifest = CurationManifest(**json.loads((curated / "curation_manifest.json").read_text(encoding="utf-8")))
-    train, validation = read_jsonl(curated / "train.jsonl"), read_jsonl(curated / "validation.jsonl")
-    train_ids, validation_ids = {doc.id for doc in train}, {doc.id for doc in validation}
-    train_texts, validation_texts = {_normalized(doc.text) for doc in train}, {_normalized(doc.text) for doc in validation}
-    exact_id_overlap = len(train_ids & validation_ids)
-    exact_text_overlap = len(train_texts & validation_texts)
+    manifest = artifact.manifest
+    splits = {name: read_jsonl(artifact.directory / f"{name}.jsonl") for name in ("train", "validation", "heldout")}
+    split_integrity = split_integrity_report(artifact)
     invalid = [
         doc.id
-        for doc in train + validation
-        if not doc.id
-        or not doc.text.strip()
+        for docs in splits.values()
+        for doc in docs
+        if not doc.primary_category
+        or doc.primary_category not in CANONICAL_CATEGORIES
         or not doc.source_id
-        or not doc.category
-        or not doc.language
-        or not doc.source_url
-        or not (doc.license_id or doc.metadata.get("verified_license_id"))
-        or "benchmark" in doc.source_id.lower()
-        or "benchmark" in str(doc.source_url).lower()
+        or not doc.relative_path
+        or not doc.extraction_policy
+        or "benchmark" in doc.source_id.casefold()
     ]
-    benchmark_exists = Path(benchmark_path).is_file()
-    benchmark_content = Path(benchmark_path).read_text(encoding="utf-8") if benchmark_exists else ""
-    benchmark_contamination = sum(1 for text in train_texts | validation_texts if text and text in _normalized(benchmark_content))
-    packed_train = curated.parent.parent / "training" / "packed" / "train_manifest.json"
-    packed_validation = curated.parent.parent / "training" / "packed" / "validation_manifest.json"
+    benchmark_file = Path(benchmark_path)
+    benchmark_exists = benchmark_file.is_file()
+    contamination = (
+        check_benchmark_against_corpus(load_benchmark_dataset(benchmark_file), artifact.directory)
+        if benchmark_exists
+        else None
+    )
+    packed_dir = artifact.directory / "packed"
+    packed = {name: (packed_dir / f"{name}_manifest.json").is_file() for name in ("train", "validation")}
     blockers: list[str] = []
-    if exact_id_overlap or exact_text_overlap:
-        blockers.append("Train/validation exact overlap detected.")
+    if not split_integrity["valid"]:
+        blockers.append("Train/validation/heldout split isolation failed.")
     if invalid:
-        blockers.append(f"Invalid curated records: {len(invalid)}.")
-    if benchmark_contamination:
-        blockers.append("Benchmark contamination candidates detected.")
-    if not manifest.output_corpus_fingerprint:
-        blockers.append("Curated fingerprint missing.")
+        blockers.append(f"Invalid or unresolved Semantic v3 records: {len(invalid)}.")
+    if not benchmark_exists:
+        blockers.append("Benchmark dataset is required for the contamination gate.")
+    elif contamination and contamination.contamination_rate > max_contamination_rate:
+        blockers.append("Benchmark contamination rate exceeds the configured threshold.")
+    if manifest.get("classification", {}).get("unresolved_units_rejected") is None:
+        blockers.append("Freeze manifest lacks unresolved-classification audit metadata.")
+    if not manifest.get("release_eligibility"):
+        blockers.append("Freeze manifest lacks release-eligibility metadata.")
+    contamination_payload = {
+        "total_benchmark_scenarios": contamination.total_scenarios if contamination else 0,
+        "contaminated_scenarios": contamination.contaminated_scenarios if contamination else 0,
+        "contamination_rate": contamination.contamination_rate if contamination else None,
+        "flagged_items_count": len(contamination.flagged_items) if contamination else 0,
+        "threshold": max_contamination_rate,
+        "passed": bool(contamination and contamination.contamination_rate <= max_contamination_rate),
+    }
+    categories = manifest.get("category_distribution", {})
+    warnings = [f"{category} has zero final tokens." for category in CANONICAL_CATEGORIES if category not in categories]
     payload: dict[str, Any] = {
-        "repository_integrity": {"curated_fingerprint": manifest.output_corpus_fingerprint},
-        "tokenizer_consistency": {
-            "identifier": manifest.tokenizer_identifier,
-            "revision": manifest.tokenizer_revision,
-            "qwen3_only_production_default": manifest.tokenizer_identifier == "Qwen/Qwen3-8B",
-        },
-        "corpus_integrity": {"invalid_records": len(invalid), "curated_documents": manifest.curated_documents_count},
-        "corpus_distribution": {"source": manifest.source_distribution, "category": manifest.category_distribution},
-        "licensing": {"distribution": manifest.license_distribution},
-        "train_validation_leakage": {
-            "train_val_exact_id_overlap": exact_id_overlap,
-            "train_val_exact_text_overlap": exact_text_overlap,
-            "train_fingerprint": compute_corpus_fingerprint(train, "train"),
-            "validation_fingerprint": compute_corpus_fingerprint(validation, "validation"),
-        },
-        "benchmark_isolation": {"benchmark_exists": benchmark_exists, "benchmark_contamination_candidates": benchmark_contamination},
-        "packing_statistics": {"packed_train_manifest_exists": packed_train.is_file(), "packed_validation_manifest_exists": packed_validation.is_file()},
-        "model_compatibility": {"model": "Qwen/Qwen3-8B", "full_parameter_8b_on_t4_guaranteed": False},
-        "training_dependency_readiness": {"config_exists": Path("configs/dapt.yaml").is_file()},
-        "colab_readiness": {"dataset_package_required": True},
-        "known_warnings": [],
+        "semantic_freeze": {"directory": str(artifact.directory), "artifact_type": manifest["artifact_type"], "corpus_version": manifest["corpus_version"], "semantic_schema_version": manifest["semantic_schema_version"], "corpus_fingerprint": artifact.corpus_fingerprint},
+        "tokenizer_consistency": manifest["tokenizer"],
+        "corpus_integrity": {"invalid_records": len(invalid), "selected_tokens": manifest["actual_selected_token_count"], "classification": manifest["classification"]},
+        "corpus_distribution": {"source": manifest["source_distribution"], "category": categories},
+        "licensing": manifest["release_eligibility"],
+        "split_integrity": split_integrity,
+        "benchmark_contamination": contamination_payload,
+        "packing_statistics": {"packed_train_manifest_exists": packed["train"], "packed_validation_manifest_exists": packed["validation"]},
+        "known_warnings": warnings,
         "blocking_issues": blockers,
         "READY_FOR_COLAB_BASELINE": benchmark_exists,
-        "READY_FOR_STAGE_5A_SMOKE": not blockers and Path("configs/dapt.yaml").is_file(),
+        "READY_FOR_STAGE_5A_SMOKE": not blockers and all(packed.values()),
         "GO_FOR_FULL_DAPT": False,
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "readiness_report.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    lines = ["# ArchitectAI Stage 4.1 Training Readiness", ""]
+    lines = ["# ArchitectAI Semantic v3 Training Readiness", ""]
     for key in ("READY_FOR_COLAB_BASELINE", "READY_FOR_STAGE_5A_SMOKE", "GO_FOR_FULL_DAPT"):
         lines.append(f"{key}={str(payload[key]).lower()}")
-    lines.extend(["", "## Blocking Issues", ""])
-    lines.extend([f"- {item}" for item in blockers] or ["- None"])
+    lines.extend(["", "## Blocking Issues", ""] + ([f"- {item}" for item in blockers] or ["- None"]))
     (output / "readiness_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return payload

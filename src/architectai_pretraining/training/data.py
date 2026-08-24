@@ -20,6 +20,7 @@ class TrainingTokenizer(Protocol):
 
 @dataclass
 class PackingStatistics:
+    sequence_length: int
     input_token_count: int
     packed_token_count: int
     padding_token_count: int
@@ -86,6 +87,7 @@ def pack_documents(
             {"input_ids": input_ids, "labels": labels, "attention_mask": [1] * len(chunk) + [0] * padding}
         )
     stats = PackingStatistics(
+        sequence_length=sequence_length,
         input_token_count=len(stream),
         packed_token_count=len(stream),
         padding_token_count=sum(sequence_length - sum(seq["attention_mask"]) for seq in sequences),
