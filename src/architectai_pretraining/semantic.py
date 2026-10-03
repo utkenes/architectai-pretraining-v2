@@ -10,7 +10,7 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from architectai_pretraining.models import CorpusDocument
 from architectai_pretraining.tokenizer import TokenCounter
@@ -217,7 +217,7 @@ class Classification:
 
 
 def classify(primary_text: str, concepts: list[str], category_hint: str | None) -> Classification:
-    scores: Counter[str] = Counter()
+    scores = cast(dict[str, float], Counter())
     evidence: dict[str, list[str]] = defaultdict(list)
     for category, signals in _CATEGORY_SIGNALS.items():
         for concept in concepts:

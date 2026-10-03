@@ -72,6 +72,7 @@ def test_new_source_policies_are_selective_and_migration_friendly() -> None:
     assert len(sources) == 37
     assert sources["mit_6824_lecture_notes"].category_hint == "distributed_systems"
     assert sources["mit_6824_lecture_notes"].include_patterns == ["l*.md", "extra/pbft.md"]
+    assert sources["mozilla_application_services"].include_patterns is not None
     assert "**/ARCHITECTURE.md" in sources["mozilla_application_services"].include_patterns
     assert sources["architecture_center"].include_patterns != ["docs/**/*.md"]
     # Existing category entries remain valid aliases for migration.
@@ -82,8 +83,11 @@ def test_new_source_policies_are_selective_and_migration_friendly() -> None:
     ]
     assert sources["dotnet_ddd_domain_events_docs"].source_token_cap == 25000
     assert sources["eventuate_tram_sagas_docs"].license_evidence_path == "LICENSE.md"
+    assert sources["gruelbox_transaction_outbox_guide"].strip_section_patterns is not None
     assert "installation" in sources["gruelbox_transaction_outbox_guide"].strip_section_patterns
+    assert sources["tomorrow_one_transactional_outbox_guide"].strip_section_patterns is not None
     assert "usage" in sources["tomorrow_one_transactional_outbox_guide"].strip_section_patterns
+    assert sources["contextmapper_bounded_context_docs"].strip_section_patterns is not None
     assert "syntax" in sources["contextmapper_bounded_context_docs"].strip_section_patterns
     assert sources["contextflow_bounded_context_case_study"].include_patterns == [
         "docs/elan-warranty-domain.md",

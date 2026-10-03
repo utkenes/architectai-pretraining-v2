@@ -108,7 +108,7 @@ def discover_lora_targets(model: Any, requested: list[str] | None = None) -> lis
 
 
 def _seed_everything(seed: int) -> None:
-    import torch  # type: ignore[import-not-found]
+    import torch
 
     random.seed(seed)
     try:
@@ -190,10 +190,10 @@ def run_smoke_training(
     else:
         load_kwargs["torch_dtype"] = torch.float16
         load_kwargs["device_map"] = {"": 0}
-    model = AutoModelForCausalLM.from_pretrained(config.model_identifier, **load_kwargs)
+    model: Any = AutoModelForCausalLM.from_pretrained(config.model_identifier, **load_kwargs)
     model.config.use_cache = False
     if config.strategy in {"lora", "qlora"}:
-        from peft import (  # type: ignore[import-not-found]
+        from peft import (
             LoraConfig,
             PeftModel,
             get_peft_model,
@@ -201,7 +201,7 @@ def run_smoke_training(
         )
 
         if config.strategy == "qlora":
-            model = prepare_model_for_kbit_training(model)
+            model = prepare_model_for_kbit_training(model)  # type: ignore[no-untyped-call]
         if resume_from:
             model = PeftModel.from_pretrained(model, Path(resume_from) / "model", is_trainable=True)
         else:
@@ -209,10 +209,11 @@ def run_smoke_training(
             model = get_peft_model(model, LoraConfig(r=config.lora_rank, lora_alpha=config.lora_alpha, lora_dropout=config.lora_dropout, target_modules=targets, task_type="CAUSAL_LM"))
     elif resume_from:
         model = AutoModelForCausalLM.from_pretrained(Path(resume_from) / "model", **load_kwargs)
-    model.gradient_checkpointing_enable()  # type: ignore[no-untyped-call]
+    model.gradient_checkpointing_enable()
     optimizer = torch.optim.AdamW(
         (parameter for parameter in model.parameters() if parameter.requires_grad),
-        **adamw_settings(config),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
     )
     warmup_steps = int(config.max_steps * config.warmup_ratio)
 
@@ -252,7 +253,7 @@ def run_smoke_training(
         optimizer.step()
         scheduler.step()
         _write_metric(metrics_path, {"step": step, "loss": mean_loss, "lr": scheduler.get_last_lr()[0], "pre_clip_gradient_norm": pre_norm, "post_clip_gradient_norm": post_norm, "allocated_vram": torch.cuda.memory_allocated(), "reserved_vram": torch.cuda.memory_reserved()})
-    model.eval()  # type: ignore[no-untyped-call]
+    model.eval()
     losses: list[float] = []
     with torch.no_grad():
         for row in validation_rows[: min(8, len(validation_rows))]:

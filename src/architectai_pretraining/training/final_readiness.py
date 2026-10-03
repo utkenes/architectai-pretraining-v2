@@ -8,9 +8,9 @@ from typing import Any
 
 from architectai_pretraining.training.corpus_contract import (
     load_semantic_freeze,
+    sha256_file,
     validate_packed_artifacts,
 )
-from architectai_pretraining.training.package import sha256_file
 from architectai_pretraining.training.readiness import generate_readiness_report
 
 

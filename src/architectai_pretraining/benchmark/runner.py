@@ -73,7 +73,7 @@ class BenchmarkRunner:
         self.tokenizer = None
         collect()
         try:
-            import torch  # type: ignore[import-not-found]
+            import torch
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -136,7 +136,7 @@ class BenchmarkRunner:
             self.config.tokenizer_identifier,
             revision=self.config.revision,
             trust_remote_code=True,
-        )
+        )  # type: ignore[no-untyped-call]
 
         # Quantization Config
         quant_config = None
@@ -189,7 +189,7 @@ class BenchmarkRunner:
         if metadata.get("tokenizer_identifier") != self.config.tokenizer_identifier:
             raise ValueError("Checkpoint metadata tokenizer does not match benchmark tokenizer.")
         try:
-            from peft import PeftModel  # type: ignore[import-not-found]
+            from peft import PeftModel
         except ImportError as err:
             raise RuntimeError("PEFT is required to evaluate a finetuned adapter.") from err
         self.model = PeftModel.from_pretrained(self.model, adapter_path, is_trainable=False)

@@ -42,16 +42,14 @@ class HuggingFaceTokenCounter:
         self._tokenizer = None
 
         try:
-            from transformers import (
-                AutoTokenizer,  # type: ignore[import-not-found,import-untyped,unused-ignore]
-            )
+            from transformers import AutoTokenizer
 
             logger.info("Loading tokenizer '%s' (revision: %s)...", identifier, revision)
             self._tokenizer = AutoTokenizer.from_pretrained(
                 identifier,
                 revision=revision,
                 trust_remote_code=True,
-            )
+            )  # type: ignore[no-untyped-call]
         except Exception as e:
             msg = (
                 f"Failed to load production tokenizer '{identifier}' (revision: {revision}): {e}"

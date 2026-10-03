@@ -34,7 +34,7 @@ def inspect_environment() -> dict[str, Any]:
         "compute_capability": None,
     }
     try:
-        import torch  # type: ignore[import-not-found]
+        import torch
 
         result["cuda_available"] = bool(torch.cuda.is_available())
         if torch.cuda.is_available():

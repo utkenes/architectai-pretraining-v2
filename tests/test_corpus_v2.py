@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -18,8 +19,8 @@ from architectai_pretraining.splitter import GroupCorpusSplitter
 from architectai_pretraining.tokenizer import MockTokenCounter
 
 
-def _write_config(path: object) -> None:
-    path.write_text(  # type: ignore[union-attr]
+def _write_config(path: Path) -> None:
+    path.write_text(
         """
 corpus_version: test-v2
 target_tokens: 1000
@@ -51,9 +52,9 @@ sources:
 
 
 def test_inventory_and_preview_preserve_external_provenance(
-    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = tmp_path / "external" / "reliable"  # type: ignore[operator]
+    root = tmp_path / "external" / "reliable"
     root.mkdir(parents=True)
     (root / "LICENSE").write_text(
         "MIT License\nPermission is hereby granted, free of charge", encoding="utf-8"
@@ -75,7 +76,7 @@ def test_inventory_and_preview_preserve_external_provenance(
     (root / "code.md").write_text(
         "# Code\n\n```python\n" + "x = service.retry()\n" * 100 + "```", encoding="utf-8"
     )
-    config = tmp_path / "corpus.yaml"  # type: ignore[operator]
+    config = tmp_path / "corpus.yaml"
     _write_config(config)
     monkeypatch.setenv("ARCHITECT_DATA_DIR", str(root.parent))
 
@@ -84,7 +85,7 @@ def test_inventory_and_preview_preserve_external_provenance(
     assert inventory["sources"][0]["root"].endswith("external\\reliable")
     assert inventory["sources"][0]["license_verified"] is True
 
-    output = tmp_path / "preview"  # type: ignore[operator]
+    output = tmp_path / "preview"
     manifest = pipeline.build(500, output, frozen=False)
     assert manifest["frozen"] is False
     assert (output / "audit.jsonl").exists()
@@ -96,7 +97,7 @@ def test_inventory_and_preview_preserve_external_provenance(
         record["decision"] in {"hard_rejected", "borderline_rejected"}
         for record in records
     )
-    docs = []
+    docs: list[CorpusDocument] = []
     for split in ("train", "validation", "heldout"):
         docs.extend(
             CorpusDocument.from_json_str(line)
@@ -109,11 +110,11 @@ def test_inventory_and_preview_preserve_external_provenance(
     assert docs[0].token_count
     assert (output / "experimental_manifest.json").exists()
     assert (output / "release_eligible_manifest.json").exists()
-    capacity_output = tmp_path / "capacity"  # type: ignore[operator]
+    capacity_output = tmp_path / "capacity"
     capacity = pipeline.write_capacity(capacity_output)
     assert "score_distributions" in capacity
     assert (capacity_output / "rejection_samples.jsonl").exists()
-    repeat = pipeline.build(500, tmp_path / "preview_repeat", frozen=False)  # type: ignore[operator]
+    repeat = pipeline.build(500, tmp_path / "preview_repeat", frozen=False)
     assert repeat["corpus_hash"] == manifest["corpus_hash"]
 
 
@@ -173,9 +174,10 @@ def test_experimental_config_enables_all_sources() -> None:
     assert len(config.source_configs) == 37
     assert all(source.enabled for source in config.source_configs)
     configured = {source.id: source for source in config.source_configs}
+    assert configured["nats_docs"].path is not None
     assert configured["nats_docs"].path.endswith(
         "nats.docs.v2-6a3e52c79b369b06890798a5fe2792eddd801852"
-    )  # type: ignore[union-attr]
+    )
     assert configured["resilience4j_docs"].category == "reliability_resilience"
     assert configured["madr"].category == "adr_decision_reasoning"
     assert configured["opendatahub_adrs"].release_eligible is True
@@ -184,6 +186,7 @@ def test_experimental_config_enables_all_sources() -> None:
     assert configured["welcome_to_ddd"].include_patterns == ["README.md"]
     assert configured["mit_6824_lecture_notes"].category_hint == "distributed_systems"
     assert configured["architecture_center"].category_hint == "software_architecture"
+    assert configured["mozilla_application_services"].include_patterns is not None
     assert configured["mozilla_application_services"].include_patterns[0].startswith("docs/adr/")
     assert configured["debezium_outbox_docs"].category_hint == "messaging_event_driven"
     assert configured["debezium_outbox_docs"].source_token_cap == 18000
@@ -201,6 +204,7 @@ def test_experimental_config_enables_all_sources() -> None:
     assert configured["tomorrow_one_transactional_outbox_guide"].license_id == "Apache-2.0"
     assert configured["tomorrow_one_transactional_outbox_guide"].source_token_cap == 8000
     assert configured["contextmapper_bounded_context_docs"].license_id == "MIT"
+    assert configured["contextmapper_bounded_context_docs"].include_patterns is not None
     assert len(configured["contextmapper_bounded_context_docs"].include_patterns) == 15
     assert configured["contextmapper_bounded_context_docs"].source_token_cap == 12000
     assert configured["contextflow_bounded_context_case_study"].include_patterns == [
@@ -223,7 +227,8 @@ def test_experimental_config_enables_all_sources() -> None:
         assert source.license_training_status == "approved"
         assert source.license_evidence_path
         assert source.license_policy == {"mode": "repository_wide"}
-        assert source.metadata["repository_snapshot"] in source.path  # type: ignore[operator]
+        assert source.path is not None
+        assert source.metadata["repository_snapshot"] in source.path
 
 
 def test_rst_headings_are_normalized_and_sectionized() -> None:
@@ -251,26 +256,26 @@ def test_rst_headings_are_normalized_and_sectionized() -> None:
 
 
 def test_freeze_preflight_rejects_insufficient_capacity(
-    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = tmp_path / "external" / "reliable"  # type: ignore[operator]
+    root = tmp_path / "external" / "reliable"
     root.mkdir(parents=True)
     (root / "architecture.md").write_text(
         "# Reliability\n\nRetries and timeouts protect availability." * 20, encoding="utf-8"
     )
-    config = tmp_path / "corpus.yaml"  # type: ignore[operator]
+    config = tmp_path / "corpus.yaml"
     _write_config(config)
     monkeypatch.setenv("ARCHITECT_DATA_DIR", str(root.parent))
     pipeline = CorpusV2Pipeline(config, token_counter=MockTokenCounter())
     with pytest.raises(ValueError, match="Freeze preflight failed"):
-        pipeline.build(10_000, tmp_path / "freeze", frozen=True)  # type: ignore[operator]
-    assert not (tmp_path / "freeze").exists()  # type: ignore[operator]
+        pipeline.build(10_000, tmp_path / "freeze", frozen=True)
+    assert not (tmp_path / "freeze").exists()
 
 
 def test_capacity_uses_same_document_grouping_and_reports_funnel(
-    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = tmp_path / "external" / "reliable"  # type: ignore[operator]
+    root = tmp_path / "external" / "reliable"
     root.mkdir(parents=True)
     (root / "LICENSE").write_text("MIT License\nPermission is hereby granted", encoding="utf-8")
     section = "Raft consensus needs leader election, quorum, and replication. " * 4
@@ -278,7 +283,7 @@ def test_capacity_uses_same_document_grouping_and_reports_funnel(
         f"# One\n\n{section}\n\n# Two\n\n{section}\n\n# Three\n\n{section}",
         encoding="utf-8",
     )
-    config = tmp_path / "corpus.yaml"  # type: ignore[operator]
+    config = tmp_path / "corpus.yaml"
     _write_config(config)
     monkeypatch.setenv("ARCHITECT_DATA_DIR", str(root.parent))
     result = CorpusV2Pipeline(config, token_counter=MockTokenCounter()).capacity()
@@ -296,8 +301,8 @@ def test_capacity_uses_same_document_grouping_and_reports_funnel(
     assert source["training_units"] == funnel["units_after_dedup"]
 
 
-def test_concept_aware_selection_prefers_less_dominant_source(tmp_path: pytest.TempPathFactory) -> None:
-    config = tmp_path / "corpus.yaml"  # type: ignore[operator]
+def test_concept_aware_selection_prefers_less_dominant_source(tmp_path: Path) -> None:
+    config = tmp_path / "corpus.yaml"
     _write_config(config)
     pipeline = CorpusV2Pipeline(config, token_counter=MockTokenCounter())
     policies = {
