@@ -3,6 +3,7 @@
 from architectai_pretraining.benchmark.models import InferenceConfig
 from architectai_pretraining.benchmark.prompts import (
     CONCISE_DECISION_SYSTEM_PROMPT,
+    FACT_BOUNDED_DECISION_V2_SYSTEM_PROMPT,
     FROZEN_SYSTEM_PROMPT,
     get_system_prompt,
 )
@@ -21,6 +22,22 @@ def test_concise_decision_profile_requires_a_bounded_fact_based_decision() -> No
     assert "first sentence" in prompt
     assert "350–550 words" in prompt
     assert "do not invent defaults" in prompt
+
+
+def test_fact_bounded_v2_allows_conditional_direction_without_defaulting_to_blocked() -> None:
+    prompt = get_system_prompt("fact_bounded_decision_v2")
+    assert prompt == FACT_BOUNDED_DECISION_V2_SYSTEM_PROMPT
+    assert "RECOMMENDED: Use when" in prompt
+    assert "CONDITIONAL: Use when a low-complexity provisional direction is possible" in prompt
+    assert "Do not use BLOCKED merely because some information is absent." in prompt
+    assert "If status is CONDITIONAL or BLOCKED, do not select a named technology." in prompt
+
+
+def test_fact_bounded_v2_forbids_unsupported_numeric_and_product_choices() -> None:
+    prompt = get_system_prompt("fact_bounded_decision_v2")
+    assert "unless the scenario explicitly provides it" in prompt
+    assert "do not invent thresholds" in prompt
+    assert "capabilities rather than products" in prompt
 
 
 def test_unknown_prompt_profile_is_rejected() -> None:
