@@ -68,7 +68,7 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-cache_dir = "scratch/mypy_cache"
+cache_dir = ".mypy_cache"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -82,6 +82,6 @@ ignore_missing_imports = true
 pythonpath = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --basetemp=scratch/pytest_tmp"
+addopts = "-v --basetemp=.pytest_tmp"
 
 

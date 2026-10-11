@@ -1,5 +1,6 @@
 """Unit tests for benchmark runner, resumable execution, and mock validation mode."""
 
+import hashlib
 import json
 
 import pytest
@@ -7,6 +8,11 @@ import pytest
 from architectai_pretraining.benchmark.dataset import BenchmarkDataset
 from architectai_pretraining.benchmark.models import BenchmarkSample, InferenceConfig
 from architectai_pretraining.benchmark.runner import BenchmarkRunner
+
+
+def test_inference_config_default_completion_budget() -> None:
+    assert InferenceConfig().max_new_tokens == 2048
+    assert InferenceConfig().system_prompt_profile == "frozen"
 
 
 def test_runner_mock_execution(tmp_path: pytest.TempPathFactory) -> None:
@@ -50,6 +56,11 @@ def test_runner_mock_execution(tmp_path: pytest.TempPathFactory) -> None:
         assert data["is_mock_run"] is True
         assert data["ready_for_stage_5"] is False
 
+    raw_output = json.loads((results_dir / "raw_outputs.jsonl").read_text(encoding="utf-8"))
+    assert raw_output["ended_with_eos"] is None
+    assert raw_output["hit_max_new_tokens"] is False
+    assert raw_output["stop_reason"] == "mock"
+
 
 def test_runner_resumable_execution(tmp_path: pytest.TempPathFactory) -> None:
     results_dir = tmp_path / "results_resume"  # type: ignore[operator]
@@ -89,5 +100,43 @@ def test_runner_resumable_execution(tmp_path: pytest.TempPathFactory) -> None:
     completed_2 = runner2._load_completed_raw_outputs()
     assert "arch_001" in completed_2
     assert "arch_002" in completed_2
+
+
+def test_frozen_profile_keeps_legacy_result_fingerprint(tmp_path: pytest.TempPathFactory) -> None:
+    dataset = BenchmarkDataset([])
+    config = InferenceConfig()
+    legacy_config = config.to_dict()
+    legacy_config.pop("system_prompt_profile")
+    expected = hashlib.sha256(
+        json.dumps(legacy_config | {"adapter_contents": ""}, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+    runner = BenchmarkRunner(dataset, config=config, results_dir=tmp_path / "results", use_mock=True)  # type: ignore[operator]
+    assert runner._inference_fingerprint == expected
+
+
+def test_legacy_raw_output_without_completion_telemetry_remains_readable(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    results_dir = tmp_path / "legacy_results"  # type: ignore[operator]
+    runner = BenchmarkRunner(BenchmarkDataset([]), results_dir=results_dir, use_mock=True)
+    legacy_raw = {
+        "sample_id": "arch_legacy",
+        "model_identifier": "Qwen/Qwen3-8B",
+        "prompt_hash": "hash",
+        "raw_response": "A complete response.",
+        "input_tokens": 5,
+        "output_tokens": 4,
+        "latency_seconds": 0.1,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "is_mock": True,
+        "inference_fingerprint": runner._inference_fingerprint,
+    }
+    (results_dir / "raw_outputs.jsonl").write_text(json.dumps(legacy_raw) + "\n", encoding="utf-8")
+
+    loaded = runner._load_completed_raw_outputs()["arch_legacy"]
+    assert loaded.ended_with_eos is None
+    assert loaded.hit_max_new_tokens is False
+    assert loaded.stop_reason == "unknown"
 
 # Benchmark test_benchmark_runner.py test update

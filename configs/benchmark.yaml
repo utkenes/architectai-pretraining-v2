@@ -16,7 +16,7 @@ generation:
   enable_thinking: false
   temperature: 0.0
   do_sample: false
-  max_new_tokens: 768
+  max_new_tokens: 2048
 
 evaluator:
   type: "deterministic_proxy_v1"

@@ -7,9 +7,12 @@ import pytest
 
 from architectai_pretraining.benchmark.dataset import BenchmarkDataset
 from architectai_pretraining.benchmark.gate import (
+    _has_repetition,
+    _has_repetition_v3,
     compare_base_to_finetuned,
     run_base_vs_finetuned_gate,
     summarize_behavior,
+    summarize_behavior_v3,
 )
 from architectai_pretraining.benchmark.models import (
     BenchmarkSample,
@@ -20,8 +23,8 @@ from architectai_pretraining.benchmark.models import (
 from architectai_pretraining.benchmark.runner import BenchmarkRunner
 
 
-def _output(sample_id: str, text: str) -> RawOutput:
-    return RawOutput(sample_id, "Qwen/Qwen3-8B", "hash", text, 1, 1, 0.0)
+def _output(sample_id: str, text: str, output_tokens: int = 1) -> RawOutput:
+    return RawOutput(sample_id, "Qwen/Qwen3-8B", "hash", text, 1, output_tokens, 0.0)
 
 
 def _evaluation(sample_id: str, score: float = 0.8) -> EvaluationResult:
@@ -52,6 +55,81 @@ def test_gate_accepts_a_non_regressing_candidate() -> None:
     base = summarize_behavior(prompts, [_output("one", response)], [_evaluation("one")])
     candidate = summarize_behavior(prompts, [_output("one", response)], [_evaluation("one", 0.81)])
     assert compare_base_to_finetuned(base, candidate).passed
+
+
+def test_repetition_detector_accepts_two_distant_option_comparison_mentions() -> None:
+    repeated = "use device id as the partition key to preserve strict ordering"
+    natural_comparison = (
+        f"Kafka can {repeated}. "
+        "It needs capacity planning, skew monitoring, consumer ownership, retention planning, "
+        "operational runbooks, observability, and carefully managed rebalancing. "
+        f"Kinesis can also {repeated}."
+    )
+    assert not _has_repetition(natural_comparison)
+
+
+def test_repetition_detector_rejects_local_and_persistent_loops() -> None:
+    loop = "repeat this exact architectural recommendation without adding new information "
+    assert _has_repetition(loop * 3)
+    assert _has_repetition(loop + "now " + loop)
+
+
+def test_v3_repetition_detector_accepts_distant_architecture_reuse() -> None:
+    repeated = "if latency exceeds 150ms or availability drops below 99 8"
+    prose = " ".join(
+        f"section{index} evidence{index} tradeoff{index} consequence{index} "
+        f"operation{index} context{index} decision{index} outcome{index}."
+        for index in range(70)
+    )
+    natural_reuse = f"{repeated}. {prose} {repeated}. {prose} {repeated}."
+    assert not _has_repetition_v3(natural_reuse)
+
+
+def test_v3_repetition_detector_accepts_short_shared_phrase_in_long_prose() -> None:
+    prose = " ".join(
+        f"section{index} schema{index} ownership{index} operation{index} "
+        f"boundary{index} evidence{index} decision{index} consequence{index}."
+        for index in range(90)
+    )
+    response = (
+        "A schema change in one domain for example adding a new field for geocode "
+        f"can affect the other domain. {prose} Another change such as adding a new field "
+        "for billing address should remain isolated."
+    )
+    assert not _has_repetition_v3(response)
+
+
+def test_v3_repetition_detector_rejects_dense_local_loop() -> None:
+    loop = "repeat this exact architectural recommendation without adding new information "
+    long_context = " ".join(["Context explains an independent architectural consideration."] * 80)
+    assert _has_repetition_v3(long_context + " " + loop * 3 + long_context)
+    assert _has_repetition_v3(loop + "now " + loop)
+
+
+def test_v3_summary_preserves_truncation_telemetry() -> None:
+    prompts = {"one": "Choose an architecture for a payment service."}
+    response = "Use a modular monolith, define clear boundaries, and revisit when ownership grows."
+    summary = summarize_behavior_v3(
+        prompts,
+        [_output("one", response, output_tokens=16)],
+        [_evaluation("one")],
+        max_new_tokens=16,
+    )
+    assert summary.truncation_rate == 1.0
+    assert summary.answer_failure_rate == 0.0
+
+
+def test_truncation_is_reported_separately_from_answer_failure() -> None:
+    prompts = {"one": "Choose an architecture for a payment service."}
+    response = "Use a modular monolith, define clear boundaries, and revisit when ownership grows."
+    summary = summarize_behavior(
+        prompts,
+        [_output("one", response, output_tokens=16)],
+        [_evaluation("one")],
+        max_new_tokens=16,
+    )
+    assert summary.truncation_rate == 1.0
+    assert summary.answer_failure_rate == 0.0
 
 
 def test_thinking_mode_cannot_use_greedy_benchmark_decoding(tmp_path: pytest.TempPathFactory) -> None:

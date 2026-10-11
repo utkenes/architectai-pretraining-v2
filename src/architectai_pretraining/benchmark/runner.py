@@ -4,6 +4,8 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Sequence
+from dataclasses import dataclass
 from gc import collect
 from pathlib import Path
 from typing import Any
@@ -16,13 +18,51 @@ from architectai_pretraining.benchmark.models import (
     InferenceConfig,
     RawOutput,
 )
-from architectai_pretraining.benchmark.prompts import FROZEN_SYSTEM_PROMPT, format_benchmark_prompt
+from architectai_pretraining.benchmark.prompts import format_benchmark_prompt, get_system_prompt
 from architectai_pretraining.benchmark.scoring import (
     DeterministicRubricEvaluator,
     export_human_review,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _GeneratedResponse:
+    """One generated response plus explicit completion telemetry."""
+
+    text: str
+    input_tokens: int
+    output_tokens: int
+    latency_seconds: float
+    ended_with_eos: bool | None
+    hit_max_new_tokens: bool
+    stop_reason: str
+
+
+def _generation_stop_telemetry(
+    generated_token_ids: Sequence[int],
+    max_new_tokens: int,
+    eos_token_ids: int | Sequence[int] | None,
+) -> tuple[bool, bool, str]:
+    """Classify completion without conflating a length limit with repetition.
+
+    A response is EOS-complete only when its last generated token is an EOS token.
+    Hitting the configured limit is recorded independently, even if a model happens
+    to emit EOS exactly at that limit.
+    """
+    if isinstance(eos_token_ids, int):
+        eos_ids = {eos_token_ids}
+    elif eos_token_ids is None:
+        eos_ids = set()
+    else:
+        eos_ids = {int(token_id) for token_id in eos_token_ids}
+
+    token_ids = [int(token_id) for token_id in generated_token_ids]
+    ended_with_eos = bool(token_ids) and token_ids[-1] in eos_ids
+    hit_max_new_tokens = len(token_ids) >= max_new_tokens
+    stop_reason = "eos" if ended_with_eos else "max_new_tokens" if hit_max_new_tokens else "other"
+    return ended_with_eos, hit_max_new_tokens, stop_reason
 
 
 def _adapter_fingerprint(adapter_path: str | None) -> str:
@@ -56,7 +96,13 @@ class BenchmarkRunner:
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.use_mock = use_mock
-        fingerprint_input = self.config.to_dict() | {"adapter_contents": _adapter_fingerprint(self.config.adapter_path)}
+        fingerprint_config = self.config.to_dict()
+        # Keep the historical fingerprint stable for the frozen benchmark so its
+        # existing raw outputs remain resumable and immutable. Candidate profiles
+        # intentionally receive a distinct fingerprint.
+        if self.config.system_prompt_profile == "frozen":
+            fingerprint_config.pop("system_prompt_profile")
+        fingerprint_input = fingerprint_config | {"adapter_contents": _adapter_fingerprint(self.config.adapter_path)}
         self._inference_fingerprint = hashlib.sha256(json.dumps(fingerprint_input, sort_keys=True).encode("utf-8")).hexdigest()
 
         self.raw_outputs_file = self.results_dir / "raw_outputs.jsonl"
@@ -100,6 +146,9 @@ class BenchmarkRunner:
                 timestamp=str(item.get("timestamp", "")),
                 is_mock=bool(item.get("is_mock", False)),
                 inference_fingerprint=str(item.get("inference_fingerprint", "")),
+                ended_with_eos=item.get("ended_with_eos"),
+                hit_max_new_tokens=bool(item.get("hit_max_new_tokens", False)),
+                stop_reason=str(item.get("stop_reason", "unknown")),
             )
             if raw.inference_fingerprint == self._inference_fingerprint:
                 completed[raw.sample_id] = raw
@@ -224,7 +273,7 @@ Implement circuit breakers, retries with exponential backoff, and dead-letter qu
 {revisit}
 {missing_info}"""
 
-    def _generate_single_response(self, sample: BenchmarkSample) -> tuple[str, int, int, float]:
+    def _generate_single_response(self, sample: BenchmarkSample) -> _GeneratedResponse:
         """Generates response for a single scenario."""
         prompt = format_benchmark_prompt(sample)
         start_time = time.time()
@@ -234,11 +283,19 @@ Implement circuit breakers, retries with exponential backoff, and dead-letter qu
             latency = round(time.time() - start_time, 4)
             in_tokens = len(prompt.split())
             out_tokens = len(response_text.split())
-            return response_text, in_tokens, out_tokens, latency
+            return _GeneratedResponse(
+                text=response_text,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+                latency_seconds=latency,
+                ended_with_eos=None,
+                hit_max_new_tokens=False,
+                stop_reason="mock",
+            )
 
         self._init_real_model()
         messages = [
-            {"role": "system", "content": FROZEN_SYSTEM_PROMPT},
+            {"role": "system", "content": get_system_prompt(self.config.system_prompt_profile)},
             {"role": "user", "content": prompt},
         ]
         text_input = self.tokenizer.apply_chat_template(
@@ -262,8 +319,20 @@ Implement circuit breakers, retries with exponential backoff, and dead-letter qu
         out_tokens = outputs.shape[1] - in_tokens
         gen_tokens = outputs[0][in_tokens:]
         response_text = self.tokenizer.decode(gen_tokens, skip_special_tokens=True)
+        eos_token_ids = getattr(self.model.generation_config, "eos_token_id", self.tokenizer.eos_token_id)
+        ended_with_eos, hit_max_new_tokens, stop_reason = _generation_stop_telemetry(
+            gen_tokens.tolist(), self.config.max_new_tokens, eos_token_ids
+        )
 
-        return response_text, in_tokens, out_tokens, latency
+        return _GeneratedResponse(
+            text=response_text,
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            latency_seconds=latency,
+            ended_with_eos=ended_with_eos,
+            hit_max_new_tokens=hit_max_new_tokens,
+            stop_reason=stop_reason,
+        )
 
     def run(self) -> tuple[BenchmarkResultManifest, list[EvaluationResult]]:
         """Runs resumable benchmark inference and evaluates baseline outputs."""
@@ -287,17 +356,20 @@ Implement circuit breakers, retries with exponential backoff, and dead-letter qu
                 prompt_text = format_benchmark_prompt(sample)
                 prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
 
-                resp_text, in_tok, out_tok, lat = self._generate_single_response(sample)
+                generated = self._generate_single_response(sample)
                 raw_out = RawOutput(
                     sample_id=sample.id,
                     model_identifier=self.config.model_identifier,
                     prompt_hash=prompt_hash,
-                    raw_response=resp_text,
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
-                    latency_seconds=lat,
+                    raw_response=generated.text,
+                    input_tokens=generated.input_tokens,
+                    output_tokens=generated.output_tokens,
+                    latency_seconds=generated.latency_seconds,
                     is_mock=self.use_mock,
                     inference_fingerprint=self._inference_fingerprint,
+                    ended_with_eos=generated.ended_with_eos,
+                    hit_max_new_tokens=generated.hit_max_new_tokens,
+                    stop_reason=generated.stop_reason,
                 )
                 completed_raw[sample.id] = raw_out
                 raw_outputs.append(raw_out)

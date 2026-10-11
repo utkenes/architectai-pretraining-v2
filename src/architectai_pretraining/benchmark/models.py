@@ -59,8 +59,9 @@ class InferenceConfig:
     device: str = "cuda"  # "cuda", "cpu"
     temperature: float = 0.0
     do_sample: bool = False
-    max_new_tokens: int = 768
+    max_new_tokens: int = 2048
     enable_thinking: bool = False
+    system_prompt_profile: str = "frozen"
     adapter_path: str | None = None
     checkpoint_metadata_path: str | None = None
 
@@ -76,6 +77,7 @@ class InferenceConfig:
             "do_sample": self.do_sample,
             "max_new_tokens": self.max_new_tokens,
             "enable_thinking": self.enable_thinking,
+            "system_prompt_profile": self.system_prompt_profile,
             "adapter_path": self.adapter_path,
             "checkpoint_metadata_path": self.checkpoint_metadata_path,
         }
@@ -97,6 +99,9 @@ class RawOutput:
     )
     is_mock: bool = False
     inference_fingerprint: str = ""
+    ended_with_eos: bool | None = None
+    hit_max_new_tokens: bool = False
+    stop_reason: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +115,9 @@ class RawOutput:
             "timestamp": self.timestamp,
             "is_mock": self.is_mock,
             "inference_fingerprint": self.inference_fingerprint,
+            "ended_with_eos": self.ended_with_eos,
+            "hit_max_new_tokens": self.hit_max_new_tokens,
+            "stop_reason": self.stop_reason,
         }
 
 

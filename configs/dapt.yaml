@@ -46,6 +46,9 @@ quantization:
 checkpointing:
   save_optimizer_state: true
   save_scheduler_state: true
+  # Keep the last three resumable adapter/optimizer checkpoints (40, 50, 54
+  # for the one-epoch run) to fit the 16 GB Vast workspace safely.
+  save_total_limit: 3
 evaluation:
   max_validation_batches: 8
   # Mandatory real base-vs-adapter gate after every adapter smoke run.

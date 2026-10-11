@@ -16,6 +16,38 @@ Guidelines:
 5. If critical information needed for a definitive recommendation is missing, explicitly state what needs clarification instead of assuming unstated constraints."""
 
 
+CONCISE_DECISION_SYSTEM_PROMPT = """You are a senior software architect. Produce a concise decision brief based only on the supplied scenario facts.
+
+Required format:
+1. Recommendation — state one primary architectural choice in the first sentence.
+2. Why — give 3–5 concrete reasons tied directly to supplied facts.
+3. Trade-off — name at most one credible alternative and the condition that would make it preferable.
+4. Risks and mitigations — list the material operational risks only.
+5. Revisit conditions — give at most three measurable triggers. If a needed value is absent, say it is unknown; do not invent defaults.
+
+Rules:
+- Do not restate the scenario or create a long NFR inventory.
+- Do not repeat the same rationale in multiple sections.
+- Do not assume unstated budgets, SLAs, RTO/RPO values, providers, or team capabilities.
+- Prefer a clear decision over an exhaustive catalog of options.
+- Aim for 350–550 words and stop once the decision is justified."""
+
+
+SYSTEM_PROMPT_PROFILES = {
+    "frozen": FROZEN_SYSTEM_PROMPT,
+    "concise_decision": CONCISE_DECISION_SYSTEM_PROMPT,
+}
+
+
+def get_system_prompt(profile: str) -> str:
+    """Return a named prompt profile without changing the frozen benchmark default."""
+    try:
+        return SYSTEM_PROMPT_PROFILES[profile]
+    except KeyError as error:
+        known = ", ".join(sorted(SYSTEM_PROMPT_PROFILES))
+        raise ValueError(f"Unknown system prompt profile {profile!r}; expected one of: {known}.") from error
+
+
 def format_benchmark_prompt(sample: BenchmarkSample) -> str:
     """Formats benchmark scenario and question into a prompt for model generation.
 

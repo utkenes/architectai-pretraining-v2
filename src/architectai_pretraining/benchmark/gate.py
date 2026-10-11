@@ -7,6 +7,7 @@ model under the *same*, explicit chat-template configuration.
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
@@ -20,12 +21,68 @@ def _words(text: str) -> list[str]:
 
 
 def _has_repetition(text: str) -> bool:
-    """Detect repeated non-trivial spans, without penalizing ordinary terminology."""
+    """Detect local or persistent repetition loops without penalizing comparisons.
+
+    A phrase used twice in distinct architecture options is ordinary explanatory
+    reuse.  A loop repeats the same span locally, or keeps returning to it often.
+    """
     tokens = _words(text)
     if len(tokens) < 16:
         return False
-    spans = [tuple(tokens[index : index + 8]) for index in range(len(tokens) - 7)]
-    return any(spans.count(span) >= 2 for span in set(spans))
+    span_width = 8
+    local_loop_gap = span_width * 2
+    positions: dict[tuple[str, ...], list[int]] = {}
+    for index in range(len(tokens) - span_width + 1):
+        span = tuple(tokens[index : index + span_width])
+        positions.setdefault(span, []).append(index)
+    for occurrences in positions.values():
+        if len(occurrences) >= 3:
+            return True
+        if len(occurrences) == 2 and occurrences[1] - occurrences[0] <= local_loop_gap:
+            return True
+    return False
+
+
+REPETITION_DETECTOR_V3 = "v3_local_cluster_density"
+
+
+def _has_repetition_v3(text: str) -> bool:
+    """Detect degenerate local loops while allowing long-form architectural reuse.
+
+    Version 2 treated any three appearances of an eight-token phrase as a loop.
+    In architecture answers, a decision threshold or option name can legitimately
+    appear in an option analysis, a recommendation, and revisit conditions.  V3
+    therefore requires evidence that the repeated text is either concentrated in
+    a local loop or consumes a material share of a short response.
+    """
+    tokens = _words(text)
+    if len(tokens) < 16:
+        return False
+    span_width = 8
+    local_loop_gap = span_width * 2
+    local_cluster_window = span_width * 4
+    density_threshold = 0.12
+    positions: dict[tuple[str, ...], list[int]] = {}
+    for index in range(len(tokens) - span_width + 1):
+        span = tuple(tokens[index : index + span_width])
+        positions.setdefault(span, []).append(index)
+    for occurrences in positions.values():
+        repeated_coverage = len(occurrences) * span_width / len(tokens)
+        if len(occurrences) >= 2:
+            has_close_pair = any(
+                later - earlier <= local_loop_gap
+                for earlier, later in zip(occurrences, occurrences[1:], strict=False)
+            )
+            if has_close_pair and repeated_coverage >= density_threshold:
+                return True
+        if len(occurrences) >= 3:
+            has_local_cluster = any(
+                occurrences[index + 2] - occurrences[index] <= local_cluster_window
+                for index in range(len(occurrences) - 2)
+            )
+            if has_local_cluster:
+                return True
+    return False
 
 
 def _has_prompt_echo(response: str, prompt: str) -> bool:
@@ -53,6 +110,7 @@ class BehaviorSummary:
     repetition_rate: float
     prompt_echo_rate: float
     answer_failure_rate: float
+    truncation_rate: float
     mean_proxy_score: float
 
 
@@ -67,10 +125,14 @@ class QualityGateResult:
         return asdict(self)
 
 
-def summarize_behavior(
-    prompts: dict[str, str], raw_outputs: list[RawOutput], evaluations: list[EvaluationResult]
+def _summarize_behavior(
+    prompts: dict[str, str],
+    raw_outputs: list[RawOutput],
+    evaluations: list[EvaluationResult],
+    max_new_tokens: int | None = None,
+    repetition_detector: Callable[[str], bool] = _has_repetition,
 ) -> BehaviorSummary:
-    """Summarize output health for one model run over the frozen benchmark."""
+    """Summarize output health with an explicitly selected repetition detector."""
     outputs = {output.sample_id: output for output in raw_outputs}
     score_by_id = {evaluation.sample_id: evaluation.overall_proxy_score for evaluation in evaluations}
     if set(outputs) != set(prompts) or set(score_by_id) != set(prompts):
@@ -78,21 +140,44 @@ def summarize_behavior(
     repetition = 0
     echo = 0
     answer_failure = 0
+    truncated = 0
     for sample_id, prompt in prompts.items():
         response = outputs[sample_id].raw_response
-        repeats = _has_repetition(response)
+        repeats = repetition_detector(response)
         echoes = _has_prompt_echo(response, prompt)
         repetition += int(repeats)
         echo += int(echoes)
         answer_failure += int(repeats or echoes or len(_words(response)) < 12)
+        truncated += int(max_new_tokens is not None and outputs[sample_id].output_tokens >= max_new_tokens)
     total = len(prompts)
     return BehaviorSummary(
         total=total,
         repetition_rate=repetition / total,
         prompt_echo_rate=echo / total,
         answer_failure_rate=answer_failure / total,
+        truncation_rate=truncated / total,
         mean_proxy_score=sum(score_by_id.values()) / total,
     )
+
+
+def summarize_behavior(
+    prompts: dict[str, str],
+    raw_outputs: list[RawOutput],
+    evaluations: list[EvaluationResult],
+    max_new_tokens: int | None = None,
+) -> BehaviorSummary:
+    """Summarize behavior using the original V2 detector for gate compatibility."""
+    return _summarize_behavior(prompts, raw_outputs, evaluations, max_new_tokens, _has_repetition)
+
+
+def summarize_behavior_v3(
+    prompts: dict[str, str],
+    raw_outputs: list[RawOutput],
+    evaluations: list[EvaluationResult],
+    max_new_tokens: int | None = None,
+) -> BehaviorSummary:
+    """Summarize behavior with the versioned V3 local-loop detector."""
+    return _summarize_behavior(prompts, raw_outputs, evaluations, max_new_tokens, _has_repetition_v3)
 
 
 def compare_base_to_finetuned(
@@ -155,8 +240,13 @@ def run_base_vs_finetuned_gate(
         finetuned_runner.release_model()
     prompts = {sample.id: format_benchmark_prompt(sample) for sample in dataset.samples}
     result = compare_base_to_finetuned(
-        summarize_behavior(prompts, base_outputs, base_evaluations),
-        summarize_behavior(prompts, finetuned_outputs, finetuned_evaluations),
+        summarize_behavior(
+            prompts, base_outputs, base_evaluations, max_new_tokens=base_config.max_new_tokens
+        ),
+        summarize_behavior(
+            prompts, finetuned_outputs, finetuned_evaluations,
+            max_new_tokens=finetuned_config.max_new_tokens,
+        ),
     )
     write_quality_gate(root / "quality_gate.json", result)
     if not result.passed:

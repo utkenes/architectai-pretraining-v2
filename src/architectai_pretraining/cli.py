@@ -219,6 +219,12 @@ def main() -> None:
     )
     bench_parser.add_argument("--max-new-tokens", type=int, default=None)
     bench_parser.add_argument(
+        "--system-prompt-profile",
+        default="frozen",
+        choices=["frozen", "concise_decision"],
+        help="Prompt profile; frozen preserves the existing gate contract.",
+    )
+    bench_parser.add_argument(
         "--mock", action="store_true", help="Run using mock inference for infrastructure validation"
     )
 
@@ -251,7 +257,16 @@ def main() -> None:
     dapt_smoke.add_argument("--resume-from", default=None)
     dapt_smoke.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
     dapt_smoke.add_argument("--readiness-dir", default="data/training")
-    for dapt_action_parser in (dapt_package, dapt_pack, dapt_readiness, dapt_final_readiness, dapt_smoke):
+    dapt_full = dapt_actions.add_parser(
+        "full", help="Run the explicit one-epoch (54-step) QLoRA DAPT promotion"
+    )
+    dapt_full.add_argument("--config", default="configs/dapt.yaml")
+    dapt_full.add_argument("--output-dir", default="outputs/dapt-v3-1epoch")
+    dapt_full.add_argument("--epochs", type=int, default=1)
+    dapt_full.add_argument("--resume-from", default=None)
+    dapt_full.add_argument("--corpus-dir", default="data/corpus_v3/freeze")
+    dapt_full.add_argument("--readiness-dir", default="data/training")
+    for dapt_action_parser in (dapt_package, dapt_pack, dapt_readiness, dapt_final_readiness, dapt_smoke, dapt_full):
         dapt_action_parser.add_argument(
             "--curated-dir",
             dest="legacy_curated_dir",
@@ -350,8 +365,8 @@ def main() -> None:
             result = generate_final_readiness_report(args.corpus_dir, args.output_dir, args.archive)
             for key in ("READY_FOR_COLAB", "READY_TO_RUN_REAL_BASELINE", "READY_FOR_STAGE_5A_REAL_SMOKE", "GO_FOR_FULL_DAPT"):
                 print(f"{key}={str(result[key]).lower()}")
-        else:
-            if args.max_steps < 1 or args.max_steps > 50:
+        elif args.dapt_action in {"smoke", "full"}:
+            if args.dapt_action == "smoke" and (args.max_steps < 1 or args.max_steps > 50):
                 raise ValueError("Stage 5A smoke must use 1-50 steps.")
             from architectai_pretraining.training.corpus_contract import (
                 load_semantic_freeze,
@@ -360,26 +375,36 @@ def main() -> None:
             from architectai_pretraining.training.readiness import generate_readiness_report
             from architectai_pretraining.training.runner import (
                 load_smoke_config,
+                prepare_full_dapt_config,
+                run_full_dapt_training,
                 run_smoke_training,
             )
 
-            smoke_config = load_smoke_config(args.config, args.output_dir)
+            training_config = load_smoke_config(args.config, args.output_dir)
             artifact = load_semantic_freeze(args.corpus_dir)
             tokenizer_info = artifact.manifest["tokenizer"]
-            validate_packing_tokenizer(artifact, smoke_config.tokenizer_identifier, smoke_config.tokenizer_revision)
+            validate_packing_tokenizer(artifact, training_config.tokenizer_identifier, training_config.tokenizer_revision)
             readiness = generate_readiness_report(artifact.directory, args.readiness_dir)
             if not readiness["READY_FOR_STAGE_5A_SMOKE"]:
-                raise RuntimeError("Semantic v3 readiness gate failed; smoke training will not load a model.")
+                raise RuntimeError("Semantic v3 readiness gate failed; training will not load a model.")
             packed_dir = artifact.directory / "packed"
-            smoke_config = dataclasses.replace(
-                smoke_config,
-                max_steps=args.max_steps,
+            if args.dapt_action == "full":
+                training_config = prepare_full_dapt_config(training_config, args.output_dir, args.epochs)
+                training = run_full_dapt_training
+            else:
+                training_config = dataclasses.replace(training_config, max_steps=args.max_steps)
+                training = run_smoke_training
+            training_config = dataclasses.replace(
+                training_config,
                 train_path=packed_dir / "train.jsonl",
                 validation_path=packed_dir / "validation.jsonl",
             )
             train_packed = json.loads((packed_dir / "train_manifest.json").read_text(encoding="utf-8"))
             validation_packed = json.loads((packed_dir / "validation_manifest.json").read_text(encoding="utf-8"))
-            result = run_smoke_training(smoke_config, artifact.corpus_fingerprint, train_packed["fingerprint"], validation_packed["fingerprint"], args.resume_from)
+            result = training(
+                training_config, artifact.corpus_fingerprint, train_packed["fingerprint"],
+                validation_packed["fingerprint"], args.resume_from,
+            )
             print(json.dumps(result, indent=2))
         return
 
@@ -439,9 +464,12 @@ def main() -> None:
                     if args.enable_thinking is None else args.enable_thinking
                 ),
                 max_new_tokens=args.max_new_tokens or int(generation_config["max_new_tokens"]),
+                system_prompt_profile=args.system_prompt_profile,
             )
 
             if args.action == "gate":
+                if args.system_prompt_profile != "frozen":
+                    raise ValueError("benchmark gate requires the frozen system prompt profile.")
                 if args.mock:
                     raise ValueError("The base-vs-finetuned behavior gate cannot run in mock mode.")
                 if not args.adapter_path:
