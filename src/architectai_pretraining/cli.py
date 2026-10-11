@@ -221,7 +221,7 @@ def main() -> None:
     bench_parser.add_argument(
         "--system-prompt-profile",
         default="frozen",
-        choices=["frozen", "concise_decision", "fact_bounded_decision_v2"],
+        choices=["frozen", "concise_decision", "fact_bounded_decision_v2", "fact_bounded_decision_v2_1"],
         help="Prompt profile; frozen preserves the existing gate contract.",
     )
     bench_parser.add_argument(

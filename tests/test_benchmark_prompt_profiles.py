@@ -1,5 +1,9 @@
 """GPU-free regression tests for benchmark prompt profiles and completion telemetry."""
 
+import sys
+
+import pytest
+
 from architectai_pretraining.benchmark.models import InferenceConfig
 from architectai_pretraining.benchmark.prompts import (
     CONCISE_DECISION_SYSTEM_PROMPT,
@@ -49,6 +53,18 @@ def test_fact_bounded_v2_forbids_unsupported_numeric_and_product_choices() -> No
     assert "do not invent thresholds" in prompt
     assert "capabilities rather than products" in prompt
 
+
+def test_cli_accepts_the_v2_1_prompt_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    from architectai_pretraining.cli import main
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["architectai-pretraining", "benchmark", "--system-prompt-profile", "fact_bounded_decision_v2_1", "--help"],
+    )
+    with pytest.raises(SystemExit) as outcome:
+        main()
+    assert outcome.value.code == 0
 
 def test_unknown_prompt_profile_is_rejected() -> None:
     try:
