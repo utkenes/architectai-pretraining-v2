@@ -140,3 +140,32 @@ def test_legacy_raw_output_without_completion_telemetry_remains_readable(
     assert loaded.stop_reason == "unknown"
 
 # Benchmark test_benchmark_runner.py test update
+
+
+def test_v2_1_mock_execution_writes_decision_quality_telemetry(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    sample = BenchmarkSample(
+        id="arch_v21",
+        category="architecture_choice",
+        difficulty="easy",
+        scenario="A service has 8 engineers and a stated throughput requirement.",
+        question="Choose a direction.",
+        facts=["8 engineers", "stated throughput requirement"],
+    )
+    results_dir = tmp_path / "v21_results"  # type: ignore[operator]
+    runner = BenchmarkRunner(
+        BenchmarkDataset([sample]),
+        config=InferenceConfig(system_prompt_profile="fact_bounded_decision_v2_1"),
+        results_dir=results_dir,
+        use_mock=True,
+    )
+
+    runner.run()
+
+    records = [json.loads(line) for line in (results_dir / "decision_quality.jsonl").read_text().splitlines()]
+    summary = json.loads((results_dir / "decision_quality_summary.json").read_text())
+    assert records[0]["static_check_status"] == "supported"
+    assert records[0]["requires_human_review"] is True
+    assert summary["evaluator_type"] == "decision_quality_static_v2_1"
+    assert "proxy_score" not in summary

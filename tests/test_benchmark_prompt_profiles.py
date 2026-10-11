@@ -3,6 +3,7 @@
 from architectai_pretraining.benchmark.models import InferenceConfig
 from architectai_pretraining.benchmark.prompts import (
     CONCISE_DECISION_SYSTEM_PROMPT,
+    FACT_BOUNDED_DECISION_V2_1_SYSTEM_PROMPT,
     FACT_BOUNDED_DECISION_V2_SYSTEM_PROMPT,
     FROZEN_SYSTEM_PROMPT,
     get_system_prompt,
@@ -31,6 +32,15 @@ def test_fact_bounded_v2_allows_conditional_direction_without_defaulting_to_bloc
     assert "CONDITIONAL: Use when a low-complexity provisional direction is possible" in prompt
     assert "Do not use BLOCKED merely because some information is absent." in prompt
     assert "If status is CONDITIONAL or BLOCKED, do not select a named technology." in prompt
+
+
+def test_fact_bounded_v2_1_requires_structured_evidence_before_status() -> None:
+    prompt = get_system_prompt("fact_bounded_decision_v2_1")
+    assert prompt == FACT_BOUNDED_DECISION_V2_1_SYSTEM_PROMPT
+    assert '"evidence_check"' in prompt
+    assert "The evidence check controls the status" in prompt
+    assert "RECOMMENDED only if at least two explicit scenario facts" in prompt
+    assert "do not make every absence material" in prompt
 
 
 def test_fact_bounded_v2_forbids_unsupported_numeric_and_product_choices() -> None:

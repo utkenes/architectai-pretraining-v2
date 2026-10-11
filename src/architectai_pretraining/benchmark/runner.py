@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from architectai_pretraining.benchmark.dataset import BenchmarkDataset
+from architectai_pretraining.benchmark.decision_quality import evaluate_decision_quality
 from architectai_pretraining.benchmark.models import (
     BenchmarkResultManifest,
     BenchmarkSample,
@@ -23,6 +24,7 @@ from architectai_pretraining.benchmark.scoring import (
     DeterministicRubricEvaluator,
     export_human_review,
 )
+from architectai_pretraining.io import write_dict_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,33 @@ class BenchmarkRunner:
         self.model = PeftModel.from_pretrained(self.model, adapter_path, is_trainable=False)
 
     def _generate_mock_response(self, sample: BenchmarkSample) -> str:
+        if self.config.system_prompt_profile == "fact_bounded_decision_v2_1":
+            evidence_sources = [*sample.facts, sample.scenario]
+            evidence_quotes = [source for source in evidence_sources if source.strip()][:2]
+            while len(evidence_quotes) < 2:
+                evidence_quotes.append(sample.scenario or "Scenario supplied.")
+            return json.dumps(
+                {
+                    "evidence_check": {
+                        "explicit_facts": [
+                            {"claim": "Supplied scenario fact.", "scenario_evidence": quote}
+                            for quote in evidence_quotes
+                        ],
+                        "material_unknowns": [],
+                        "nonmaterial_unknowns": [],
+                        "conflicts": [],
+                        "provisional_direction": {
+                            "possible": True,
+                            "direction": "Use the lowest-complexity capability direction justified by the facts.",
+                        },
+                    },
+                    "decision": {
+                        "status": "RECOMMENDED",
+                        "recommendation": "Use the lowest-complexity direction justified by the supplied facts.",
+                    },
+                }
+            )
+
         """Generates realistic structured mock responses for fast unit test verification."""
         scenario_lower = sample.scenario.lower()
         tradeoffs = "Trade-offs between availability and consistency must be carefully evaluated based on scenario facts."
@@ -373,8 +402,6 @@ Implement circuit breakers, retries with exponential backoff, and dead-letter qu
                 )
                 completed_raw[sample.id] = raw_out
                 raw_outputs.append(raw_out)
-                from architectai_pretraining.io import write_dict_jsonl
-
                 write_dict_jsonl([r.to_dict() for r in raw_outputs], self.raw_outputs_file)
                 logger.info("[%d/%d] Generated raw response for %s", idx + 1, len(self.dataset.samples), sample.id)
 
@@ -388,6 +415,18 @@ Implement circuit breakers, retries with exponential backoff, and dead-letter qu
         # Export human review JSONL
         export_human_review(self.dataset.samples, raw_outputs, evaluations, self.human_review_file)
 
+        # V2.1 writes decision-quality telemetry separately from the legacy
+        # deterministic proxy. It never changes frozen-profile artifacts or gate
+        # semantics, and marks every record for semantic human review.
+        if self.config.system_prompt_profile == "fact_bounded_decision_v2_1":
+            records, summary = evaluate_decision_quality(self.dataset.samples, raw_outputs)
+            write_dict_jsonl(
+                [record.to_dict() for record in records],
+                self.results_dir / "decision_quality.jsonl",
+            )
+            (self.results_dir / "decision_quality_summary.json").write_text(
+                json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+            )
         # Compute result fingerprint
         result_hasher = hashlib.sha256()
         for raw in sorted(raw_outputs, key=lambda x: x.sample_id):
